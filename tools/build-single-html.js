@@ -65,6 +65,7 @@ function main() {
   const embeddedConfig = {
     singleFile: true,
     ortWasmBase64: readBase64(wasmPath),
+    pdfModuleBase64: readBase64(pdfPath),
     pdfWorkerBase64: readBase64(pdfWorkerPath),
     models: {}
   };
@@ -80,13 +81,9 @@ function main() {
   }
 
   const sdkModule = makeBrowserSdkModule(readText(sdkPath));
-  const pdfModule = readText(pdfPath);
   const scripts = [
     "  <script>",
     `    globalThis.__PADDLEOCR_OFFLINE_EMBEDDED__ = ${JSON.stringify(embeddedConfig)};`,
-    "  </script>",
-    "  <script type=\"module\">",
-    pdfModule,
     "  </script>",
     "  <script type=\"module\">",
     sdkModule,

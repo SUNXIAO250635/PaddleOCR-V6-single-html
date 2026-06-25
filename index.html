@@ -892,6 +892,7 @@
     const EMBEDDED = globalThis.__PADDLEOCR_OFFLINE_EMBEDDED__ || {
       singleFile: false,
       ortWasmBase64: "",
+      pdfModuleBase64: "",
       pdfWorkerBase64: "",
       models: {}
     };
@@ -947,6 +948,7 @@
       searchQuery: "",
       highlightedIndex: -1,
       wasmBinary: null,
+      pdfModuleUrl: "",
       pdfWorkerUrl: "",
       fitWidth: true,
       timings: {
@@ -1239,13 +1241,25 @@
     }
 
     async function loadPdfModule() {
-      const pdfjs = globalThis.pdfjsLib || await import(PDF_CONFIG.localModuleUrl);
+      const pdfjs = globalThis.pdfjsLib || await importPdfModule();
       if (EMBEDDED.pdfWorkerBase64) {
         pdfjs.GlobalWorkerOptions.workerSrc = embeddedPdfWorkerUrl();
       } else {
         pdfjs.GlobalWorkerOptions.workerSrc = PDF_CONFIG.localWorkerUrl;
       }
       return pdfjs;
+    }
+
+    async function importPdfModule() {
+      if (EMBEDDED.pdfModuleBase64) {
+        if (!state.pdfModuleUrl) {
+          const bytes = base64ToUint8Array(EMBEDDED.pdfModuleBase64);
+          const blob = new Blob([bytes], { type: "text/javascript" });
+          state.pdfModuleUrl = URL.createObjectURL(blob);
+        }
+        return await import(state.pdfModuleUrl);
+      }
+      return await import(PDF_CONFIG.localModuleUrl);
     }
 
     function embeddedPdfWorkerUrl() {
@@ -2108,6 +2122,10 @@
         pad(now.getMinutes()),
         pad(now.getSeconds())
       ].join("");
+    }
+
+    function stripExtension(name) {
+      return String(name || "document").replace(/\.[^.\\/]+$/, "");
     }
 
     function messageOf(error) {
