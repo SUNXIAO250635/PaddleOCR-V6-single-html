@@ -868,6 +868,18 @@
             <svg><use href="#icon-download"></use></svg>
             导出 JSON
           </button>
+          <button id="tableBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-box"></use></svg>
+            还原表格
+          </button>
+          <button id="copyTableBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-copy"></use></svg>
+            复制表格
+          </button>
+          <button id="exportCsvBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-download"></use></svg>
+            导出 CSV
+          </button>
           <button id="redrawBtn" class="btn" type="button" disabled>
             <svg><use href="#icon-refresh"></use></svg>
             重绘
@@ -946,6 +958,7 @@
       status: "idle",
       step: "input",
       searchQuery: "",
+      tableMode: false,
       highlightedIndex: -1,
       wasmBinary: null,
       pdfModuleUrl: "",
@@ -985,6 +998,9 @@
       resultSearch: document.getElementById("resultSearch"),
       copyBtn: document.getElementById("copyBtn"),
       exportBtn: document.getElementById("exportBtn"),
+      tableBtn: document.getElementById("tableBtn"),
+      copyTableBtn: document.getElementById("copyTableBtn"),
+      exportCsvBtn: document.getElementById("exportCsvBtn"),
       redrawBtn: document.getElementById("redrawBtn"),
       results: document.getElementById("results"),
       rawText: document.getElementById("rawText"),
@@ -1062,10 +1078,14 @@
       els.clearBtn.addEventListener("click", resetImage);
       els.copyBtn.addEventListener("click", copyText);
       els.exportBtn.addEventListener("click", exportJson);
+      els.tableBtn.addEventListener("click", restoreTablePreview);
+      els.copyTableBtn.addEventListener("click", copyTable);
+      els.exportCsvBtn.addEventListener("click", exportCsv);
       els.redrawBtn.addEventListener("click", drawPreview);
       els.fitBtn.addEventListener("click", toggleFitMode);
       els.resultSearch.addEventListener("input", () => {
         state.searchQuery = els.resultSearch.value.trim();
+        state.tableMode = false;
         state.highlightedIndex = -1;
         render();
         drawPreview();
@@ -1319,6 +1339,7 @@
       const item = state.images.find((entry) => entry.id === id);
       if (!item) return;
       state.activeImageId = item.id;
+      state.tableMode = false;
       state.highlightedIndex = -1;
       syncActiveImageState(item);
       drawPreview();
@@ -1379,6 +1400,7 @@
       const startedAt = performance.now();
       setBusy(true, "正在识别...");
       state.status = "recognizing";
+      state.tableMode = false;
       setStep("ocr");
       render();
 
@@ -1424,6 +1446,7 @@
       if (state.batchRunning || state.status === "recognizing") return;
 
       state.batchRunning = true;
+      state.tableMode = false;
       setBusy(true, "正在批量识别...");
       render();
 
@@ -1437,6 +1460,7 @@
           const item = state.images[index];
           selectImage(item.id);
           item.status = "recognizing";
+          state.tableMode = false;
           syncActiveImageState(item);
           setStep("ocr");
           setMessage(`正在识别第 ${index + 1}/${state.images.length} 张：${item.name}`, "warn");
@@ -1619,6 +1643,7 @@
       state.timings.ocrMs = null;
       state.results = [];
       state.rawOutput = null;
+      state.tableMode = false;
       state.images.forEach((item) => {
         item.results = [];
         item.rawOutput = null;
@@ -1776,6 +1801,179 @@
       }
     }
 
+    function restoreTablePreview() {
+      const table = buildTableFromResults(state.results);
+      if (!table) {
+        setMessage("当前结果缺少可用于还原表格的坐标信息。", "warn");
+        return;
+      }
+      state.tableMode = true;
+      els.rawText.textContent = table.markdown;
+      setMessage(`已按 ${table.rows.length} 行 x ${table.columns.length} 列还原表格，可复制 Markdown 或导出 CSV。`, "ok");
+      render();
+    }
+
+    async function copyTable() {
+      const table = buildTableFromResults(state.results);
+      if (!table) {
+        setMessage("当前结果无法还原为表格。", "warn");
+        return;
+      }
+      try {
+        await writeClipboardText(table.markdown);
+        setMessage("已复制 Markdown 表格。", "ok");
+      } catch {
+        fallbackCopy(table.markdown);
+        setMessage("已使用兼容方式复制 Markdown 表格。", "ok");
+      }
+    }
+
+    function exportCsv() {
+      const table = buildTableFromResults(state.results);
+      if (!table) {
+        setMessage("当前结果无法导出 CSV。", "warn");
+        return;
+      }
+      const blob = new Blob(["\ufeff", table.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `paddleocr-v6-table-${formatDateForFile()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function buildTableFromResults(results) {
+      const boxes = results
+        .map((item) => ({ item, box: boxOfPoly(item.poly) }))
+        .filter(({ item, box }) => item.text && box)
+        .map(({ item, box }) => ({
+          text: String(item.text).trim(),
+          score: item.score,
+          ...box
+        }));
+
+      if (boxes.length < 4) return null;
+
+      const medianHeight = median(boxes.map((box) => box.height)) || 18;
+      const rowThreshold = Math.max(12, medianHeight * 1.65);
+      const rows = [];
+
+      boxes.sort((a, b) => a.centerY - b.centerY || a.centerX - b.centerX);
+      for (const box of boxes) {
+        let row = rows.find((candidate) => Math.abs(candidate.centerY - box.centerY) <= rowThreshold);
+        if (!row) {
+          row = { centerY: box.centerY, cells: [] };
+          rows.push(row);
+        }
+        row.cells.push(box);
+        row.centerY = row.cells.reduce((sum, cell) => sum + cell.centerY, 0) / row.cells.length;
+      }
+
+      rows.sort((a, b) => a.centerY - b.centerY);
+      rows.forEach((row) => row.cells.sort((a, b) => a.centerX - b.centerX));
+
+      const anchorRow = rows.find((row) => row.cells.length >= 2) || rows.reduce((best, row) => row.cells.length > best.cells.length ? row : best, rows[0]);
+      const anchors = anchorRow.cells.map((cell) => cell.centerX).sort((a, b) => a - b);
+      if (anchors.length < 2) return null;
+
+      const tableRows = rows.map((row) => {
+        const cells = Array.from({ length: anchors.length }, () => []);
+        for (const cell of row.cells) {
+          const column = nearestIndex(anchors, cell.centerX);
+          cells[column].push(cell);
+        }
+        return cells.map((items) => {
+          return items
+            .sort((a, b) => a.centerY - b.centerY || a.centerX - b.centerX)
+            .map((item) => item.text)
+            .join(" ")
+            .trim();
+        });
+      }).filter((row) => row.some(Boolean));
+
+      if (tableRows.length < 2) return null;
+
+      const columns = tableRows[0].map((text, index) => text || `列${index + 1}`);
+      const bodyRows = tableRows.slice(1);
+      return {
+        columns,
+        rows: bodyRows,
+        markdown: tableToMarkdown(columns, bodyRows),
+        csv: tableToCsv([columns, ...bodyRows])
+      };
+    }
+
+    function boxOfPoly(poly) {
+      if (!Array.isArray(poly) || poly.length < 4) return null;
+      const xs = poly.map((point) => Number(point[0])).filter(Number.isFinite);
+      const ys = poly.map((point) => Number(point[1])).filter(Number.isFinite);
+      if (!xs.length || !ys.length) return null;
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      return {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+        centerX: (left + right) / 2,
+        centerY: (top + bottom) / 2
+      };
+    }
+
+    function nearestIndex(values, target) {
+      let bestIndex = 0;
+      let bestDistance = Infinity;
+      values.forEach((value, index) => {
+        const distance = Math.abs(value - target);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = index;
+        }
+      });
+      return bestIndex;
+    }
+
+    function tableToMarkdown(columns, rows) {
+      const allRows = [columns, ...rows];
+      const widths = columns.map((_, column) => {
+        return Math.max(3, ...allRows.map((row) => markdownCell(row[column]).length));
+      });
+      const formatRow = (row) => `| ${columns.map((_, column) => markdownCell(row[column]).padEnd(widths[column], " ")).join(" | ")} |`;
+      const separator = `| ${widths.map((width) => "-".repeat(width)).join(" | ")} |`;
+      return [formatRow(columns), separator, ...rows.map(formatRow)].join("\n");
+    }
+
+    function markdownCell(value) {
+      return String(value || "").replaceAll("|", "\\|").replace(/\s*\n\s*/g, " ");
+    }
+
+    function tableToCsv(rows) {
+      return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+    }
+
+    function csvCell(value) {
+      const text = String(value || "");
+      if (/[",\r\n]/.test(text)) return `"${text.replaceAll("\"", "\"\"")}"`;
+      return text;
+    }
+
+    function serializableTable(table) {
+      if (!table) return null;
+      return {
+        columns: table.columns,
+        rows: table.rows,
+        markdown: table.markdown,
+        csv: table.csv
+      };
+    }
+
     async function writeClipboardText(text) {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -1812,6 +2010,7 @@
           error: item.error || "",
           ocrMs: item.ocrMs,
           text: (item.results || []).map((result) => result.text).filter(Boolean).join("\n"),
+          table: serializableTable(buildTableFromResults(item.results || [])),
           results: (item.results || []).map(({ index, text, score, poly }) => ({ index, text, score, poly }))
         })),
         image: {
@@ -1823,6 +2022,7 @@
         },
         timings: state.timings,
         text: collectText(),
+        table: serializableTable(buildTableFromResults(state.results)),
         results: state.results.map(({ index, text, score, poly }) => ({ index, text, score, poly }))
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
@@ -1852,6 +2052,7 @@
       state.results = [];
       state.rawOutput = null;
       state.searchQuery = "";
+      state.tableMode = false;
       els.resultSearch.value = "";
       state.highlightedIndex = -1;
       state.timings.ocrMs = null;
@@ -1881,6 +2082,9 @@
       els.runAllBtn.disabled = !state.images.length || state.status === "recognizing" || state.batchRunning;
       els.copyBtn.disabled = !hasBatchResults;
       els.exportBtn.disabled = !hasBatchResults;
+      els.tableBtn.disabled = !hasResults;
+      els.copyTableBtn.disabled = !hasResults;
+      els.exportCsvBtn.disabled = !hasResults;
       els.redrawBtn.disabled = !hasImage;
       els.imageChip.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight}` : "未选择图片";
       els.imageChip.className = `chip ${hasImage ? "ok" : ""}`;
@@ -1892,7 +2096,12 @@
       els.sizeMetric.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight} / ${formatBytes(state.imageSize)}` : "-";
       els.assetMetric.textContent = runtimeLabel();
       els.footerModel.textContent = currentModel.label;
-      els.rawText.textContent = hasResults ? collectText() : "识别完成后，这里会显示可复制的纯文本。";
+      if (state.tableMode && hasResults) {
+        const table = buildTableFromResults(state.results);
+        els.rawText.textContent = table ? table.markdown : "当前结果无法还原为表格。";
+      } else {
+        els.rawText.textContent = hasResults ? collectText() : "识别完成后，这里会显示可复制的纯文本。";
+      }
       renderQueue();
       renderSteps();
       renderResults();
@@ -2027,6 +2236,9 @@
       if (isBusy) {
         els.runBtn.disabled = true;
         els.runAllBtn.disabled = true;
+        els.tableBtn.disabled = true;
+        els.copyTableBtn.disabled = true;
+        els.exportCsvBtn.disabled = true;
       }
     }
 
@@ -2108,6 +2320,13 @@
         unit += 1;
       }
       return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function median(values) {
+      const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+      if (!sorted.length) return 0;
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
     }
 
     function formatDateForFile() {
