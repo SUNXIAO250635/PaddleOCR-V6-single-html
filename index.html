@@ -880,6 +880,14 @@
             <svg><use href="#icon-download"></use></svg>
             导出 CSV
           </button>
+          <button id="codeBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-box"></use></svg>
+            还原代码
+          </button>
+          <button id="copyCodeBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-copy"></use></svg>
+            复制代码块
+          </button>
           <button id="redrawBtn" class="btn" type="button" disabled>
             <svg><use href="#icon-refresh"></use></svg>
             重绘
@@ -959,6 +967,7 @@
       step: "input",
       searchQuery: "",
       tableMode: false,
+      codeMode: false,
       highlightedIndex: -1,
       wasmBinary: null,
       pdfModuleUrl: "",
@@ -1001,6 +1010,8 @@
       tableBtn: document.getElementById("tableBtn"),
       copyTableBtn: document.getElementById("copyTableBtn"),
       exportCsvBtn: document.getElementById("exportCsvBtn"),
+      codeBtn: document.getElementById("codeBtn"),
+      copyCodeBtn: document.getElementById("copyCodeBtn"),
       redrawBtn: document.getElementById("redrawBtn"),
       results: document.getElementById("results"),
       rawText: document.getElementById("rawText"),
@@ -1081,11 +1092,14 @@
       els.tableBtn.addEventListener("click", restoreTablePreview);
       els.copyTableBtn.addEventListener("click", copyTable);
       els.exportCsvBtn.addEventListener("click", exportCsv);
+      els.codeBtn.addEventListener("click", restoreCodePreview);
+      els.copyCodeBtn.addEventListener("click", copyCodeBlock);
       els.redrawBtn.addEventListener("click", drawPreview);
       els.fitBtn.addEventListener("click", toggleFitMode);
       els.resultSearch.addEventListener("input", () => {
         state.searchQuery = els.resultSearch.value.trim();
         state.tableMode = false;
+        state.codeMode = false;
         state.highlightedIndex = -1;
         render();
         drawPreview();
@@ -1340,6 +1354,7 @@
       if (!item) return;
       state.activeImageId = item.id;
       state.tableMode = false;
+      state.codeMode = false;
       state.highlightedIndex = -1;
       syncActiveImageState(item);
       drawPreview();
@@ -1401,6 +1416,7 @@
       setBusy(true, "正在识别...");
       state.status = "recognizing";
       state.tableMode = false;
+      state.codeMode = false;
       setStep("ocr");
       render();
 
@@ -1447,6 +1463,7 @@
 
       state.batchRunning = true;
       state.tableMode = false;
+      state.codeMode = false;
       setBusy(true, "正在批量识别...");
       render();
 
@@ -1461,6 +1478,7 @@
           selectImage(item.id);
           item.status = "recognizing";
           state.tableMode = false;
+          state.codeMode = false;
           syncActiveImageState(item);
           setStep("ocr");
           setMessage(`正在识别第 ${index + 1}/${state.images.length} 张：${item.name}`, "warn");
@@ -1644,6 +1662,7 @@
       state.results = [];
       state.rawOutput = null;
       state.tableMode = false;
+      state.codeMode = false;
       state.images.forEach((item) => {
         item.results = [];
         item.rawOutput = null;
@@ -1808,6 +1827,7 @@
         return;
       }
       state.tableMode = true;
+      state.codeMode = false;
       els.rawText.textContent = table.markdown;
       setMessage(`已按 ${table.rows.length} 行 x ${table.columns.length} 列还原表格，可复制 Markdown 或导出 CSV。`, "ok");
       render();
@@ -1843,6 +1863,163 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
+    }
+
+    function restoreCodePreview() {
+      const code = buildCodeBlockFromResults(state.results);
+      if (!code) {
+        setMessage("当前结果缺少可用于还原代码块的坐标信息。", "warn");
+        return;
+      }
+      state.tableMode = false;
+      state.codeMode = true;
+      els.rawText.textContent = code.markdown;
+      setMessage(`已按 ${code.lines.length} 行还原代码块，并尝试去除左侧行号。`, "ok");
+      render();
+    }
+
+    async function copyCodeBlock() {
+      const code = buildCodeBlockFromResults(state.results);
+      if (!code) {
+        setMessage("当前结果无法还原为代码块。", "warn");
+        return;
+      }
+      try {
+        await writeClipboardText(code.markdown);
+        setMessage("已复制 Markdown 代码块。", "ok");
+      } catch {
+        fallbackCopy(code.markdown);
+        setMessage("已使用兼容方式复制 Markdown 代码块。", "ok");
+      }
+    }
+
+    function buildCodeBlockFromResults(results) {
+      const boxes = results
+        .map((item) => ({ item, box: boxOfPoly(item.poly) }))
+        .filter(({ item, box }) => item.text && box)
+        .map(({ item, box }) => ({
+          text: String(item.text).trim(),
+          ...box
+        }));
+
+      if (boxes.length < 2) return null;
+
+      const medianHeight = median(boxes.map((box) => box.height)) || 18;
+      const rowThreshold = Math.max(10, medianHeight * 1.35);
+      const rows = groupBoxesByRows(boxes, rowThreshold);
+      const numericBoxes = boxes.filter((box) => /^\d+$/.test(box.text));
+      const gutterRight = estimateLineNumberGutter(numericBoxes, medianHeight);
+
+      const usableRows = rows.map((row) => {
+        const sorted = row.cells.slice().sort((a, b) => a.left - b.left);
+        const firstTextBox = sorted.find((box) => !/^\d+$/.test(box.text));
+        const firstTextLeft = firstTextBox?.left ?? Infinity;
+        const cells = sorted.filter((box) => {
+          if (!/^\d+$/.test(box.text)) return true;
+          if (gutterRight && box.centerX <= gutterRight) return false;
+          if (box.right <= firstTextLeft + medianHeight * 0.8) return false;
+          return true;
+        });
+        return { ...row, cells };
+      }).filter((row) => row.cells.some((box) => box.text));
+
+      if (!usableRows.length) return null;
+
+      const contentBoxes = usableRows.flatMap((row) => row.cells);
+      const contentLeft = Math.min(...contentBoxes.map((box) => box.left));
+      const charWidth = estimateCharWidth(contentBoxes, medianHeight);
+      const lines = usableRows.map((row) => renderCodeLine(row.cells, contentLeft, charWidth)).filter((line) => line.trim());
+      if (!lines.length) return null;
+
+      const language = detectCodeLanguage(lines);
+      const markdown = `\`\`\`${language}\n${lines.join("\n")}\n\`\`\``;
+      return {
+        language,
+        text: lines.join("\n"),
+        markdown,
+        lines
+      };
+    }
+
+    function groupBoxesByRows(boxes, rowThreshold) {
+      const rows = [];
+      boxes.sort((a, b) => a.centerY - b.centerY || a.centerX - b.centerX);
+      for (const box of boxes) {
+        let row = rows.find((candidate) => Math.abs(candidate.centerY - box.centerY) <= rowThreshold);
+        if (!row) {
+          row = { centerY: box.centerY, cells: [] };
+          rows.push(row);
+        }
+        row.cells.push(box);
+        row.centerY = row.cells.reduce((sum, cell) => sum + cell.centerY, 0) / row.cells.length;
+      }
+      rows.sort((a, b) => a.centerY - b.centerY);
+      rows.forEach((row) => row.cells.sort((a, b) => a.left - b.left));
+      return rows;
+    }
+
+    function estimateLineNumberGutter(numericBoxes, medianHeight) {
+      if (numericBoxes.length < 3) return 0;
+      const sorted = numericBoxes.slice().sort((a, b) => a.centerX - b.centerX);
+      const firstCluster = [];
+      for (const box of sorted) {
+        if (!firstCluster.length || Math.abs(box.centerX - firstCluster[0].centerX) <= medianHeight * 1.4) {
+          firstCluster.push(box);
+        } else {
+          break;
+        }
+      }
+      if (firstCluster.length < 3) return 0;
+      return Math.max(...firstCluster.map((box) => box.right)) + medianHeight * 0.9;
+    }
+
+    function estimateCharWidth(boxes, fallbackHeight) {
+      const samples = boxes
+        .filter((box) => box.text.length >= 2)
+        .map((box) => box.width / box.text.length)
+        .filter((value) => Number.isFinite(value) && value > 1);
+      return Math.max(4, Math.min(18, median(samples) || fallbackHeight * 0.55 || 8));
+    }
+
+    function renderCodeLine(cells, contentLeft, charWidth) {
+      const sorted = cells.slice().sort((a, b) => a.left - b.left);
+      let line = "";
+      let cursor = 0;
+      for (const cell of sorted) {
+        const target = Math.max(0, Math.round((cell.left - contentLeft) / charWidth));
+        if (target > cursor) {
+          line += " ".repeat(Math.min(80, target - cursor));
+          cursor = target;
+        } else if (line && needsJoinSpace(line, cell.text)) {
+          line += " ";
+          cursor += 1;
+        }
+        line += cell.text;
+        cursor += cell.text.length;
+      }
+      return cleanupCodeLine(line);
+    }
+
+    function needsJoinSpace(line, nextText) {
+      if (!line || !nextText) return false;
+      if (/\s$/.test(line)) return false;
+      if (/^[,.;:)\]}]/.test(nextText)) return false;
+      if (/["'({[\-]$/.test(line)) return false;
+      return false;
+    }
+
+    function cleanupCodeLine(line) {
+      return line
+        .replace(/^\s*\d+\s+(?=["'{[\]}])/g, "")
+        .replace(/[ \t]+$/g, "");
+    }
+
+    function detectCodeLanguage(lines) {
+      const text = lines.join("\n");
+      if (/^\s*[{[]/.test(text) || /"[^"]+"\s*:/.test(text)) return "json";
+      if (/\b(function|const|let|var|return|import|export)\b/.test(text)) return "js";
+      if (/\b(class|def|import|from|return)\b/.test(text)) return "python";
+      return "";
     }
 
     function buildTableFromResults(results) {
@@ -1974,6 +2151,16 @@
       };
     }
 
+    function serializableCode(code) {
+      if (!code) return null;
+      return {
+        language: code.language,
+        text: code.text,
+        markdown: code.markdown,
+        lines: code.lines
+      };
+    }
+
     async function writeClipboardText(text) {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
@@ -2011,6 +2198,7 @@
           ocrMs: item.ocrMs,
           text: (item.results || []).map((result) => result.text).filter(Boolean).join("\n"),
           table: serializableTable(buildTableFromResults(item.results || [])),
+          code: serializableCode(buildCodeBlockFromResults(item.results || [])),
           results: (item.results || []).map(({ index, text, score, poly }) => ({ index, text, score, poly }))
         })),
         image: {
@@ -2023,6 +2211,7 @@
         timings: state.timings,
         text: collectText(),
         table: serializableTable(buildTableFromResults(state.results)),
+        code: serializableCode(buildCodeBlockFromResults(state.results)),
         results: state.results.map(({ index, text, score, poly }) => ({ index, text, score, poly }))
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
@@ -2053,6 +2242,7 @@
       state.rawOutput = null;
       state.searchQuery = "";
       state.tableMode = false;
+      state.codeMode = false;
       els.resultSearch.value = "";
       state.highlightedIndex = -1;
       state.timings.ocrMs = null;
@@ -2085,6 +2275,8 @@
       els.tableBtn.disabled = !hasResults;
       els.copyTableBtn.disabled = !hasResults;
       els.exportCsvBtn.disabled = !hasResults;
+      els.codeBtn.disabled = !hasResults;
+      els.copyCodeBtn.disabled = !hasResults;
       els.redrawBtn.disabled = !hasImage;
       els.imageChip.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight}` : "未选择图片";
       els.imageChip.className = `chip ${hasImage ? "ok" : ""}`;
@@ -2099,6 +2291,9 @@
       if (state.tableMode && hasResults) {
         const table = buildTableFromResults(state.results);
         els.rawText.textContent = table ? table.markdown : "当前结果无法还原为表格。";
+      } else if (state.codeMode && hasResults) {
+        const code = buildCodeBlockFromResults(state.results);
+        els.rawText.textContent = code ? code.markdown : "当前结果无法还原为代码块。";
       } else {
         els.rawText.textContent = hasResults ? collectText() : "识别完成后，这里会显示可复制的纯文本。";
       }
@@ -2239,6 +2434,8 @@
         els.tableBtn.disabled = true;
         els.copyTableBtn.disabled = true;
         els.exportCsvBtn.disabled = true;
+        els.codeBtn.disabled = true;
+        els.copyCodeBtn.disabled = true;
       }
     }
 
