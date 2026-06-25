@@ -1,0 +1,1611 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PaddleOCR-V6 离线工作台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --text: #17212b;
+      --muted: #617181;
+      --line: #d7e0e8;
+      --line-strong: #aebbc8;
+      --teal: #0f766e;
+      --teal-dark: #0a5f59;
+      --teal-soft: #e1f3f1;
+      --blue: #2563eb;
+      --blue-soft: #eaf1ff;
+      --amber: #a16207;
+      --amber-soft: #fff7df;
+      --red: #b42318;
+      --red-soft: #fff0ee;
+      --radius: 8px;
+      --shadow: 0 12px 32px rgba(23, 33, 43, 0.08);
+      --font: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    button,
+    select,
+    input {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+    }
+
+    svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 2;
+    }
+
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .brand {
+      min-width: 230px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 19px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+
+    .brand p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .top-controls {
+      display: flex;
+      align-items: end;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .field {
+      display: grid;
+      gap: 4px;
+    }
+
+    .field span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    select {
+      min-width: 170px;
+      height: 36px;
+      padding: 0 32px 0 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .chip::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--line-strong);
+    }
+
+    .chip.ok::before {
+      background: var(--teal);
+    }
+
+    .chip.warn::before {
+      background: #d18b00;
+    }
+
+    .chip.error::before {
+      background: var(--red);
+    }
+
+    .workspace {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 410px;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .pane {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .preview-pane {
+      min-height: 650px;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+    }
+
+    .result-pane {
+      min-height: 650px;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto auto auto 1fr auto;
+    }
+
+    .pane-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .pane-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      font-weight: 700;
+    }
+
+    .button-row,
+    .result-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      min-height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+    }
+
+    .btn:hover:not(:disabled) {
+      border-color: var(--line-strong);
+      background: var(--panel-soft);
+    }
+
+    .btn.primary {
+      border-color: var(--teal);
+      background: var(--teal);
+      color: #ffffff;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+      border-color: var(--teal-dark);
+      background: var(--teal-dark);
+    }
+
+    .btn.icon-only {
+      width: 36px;
+      padding: 0;
+    }
+
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .toggle {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--teal);
+    }
+
+    .drop-zone {
+      margin: 12px;
+      padding: 12px;
+      border: 1px dashed var(--line-strong);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      outline: none;
+    }
+
+    .drop-zone.dragging,
+    .drop-zone:focus-visible {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .drop-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .drop-icon {
+      flex: 0 0 auto;
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: var(--radius);
+      background: #e8eef2;
+      color: var(--teal);
+    }
+
+    .drop-text {
+      min-width: 0;
+    }
+
+    .drop-text strong,
+    .drop-text span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .drop-text strong {
+      font-size: 14px;
+    }
+
+    .drop-text span {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .canvas-shell {
+      position: relative;
+      min-height: 450px;
+      margin: 0 12px 12px;
+      display: grid;
+      place-items: center;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #edf2f5;
+    }
+
+    .canvas-shell.fit-width {
+      place-items: start center;
+      padding: 10px;
+    }
+
+    #previewCanvas {
+      display: none;
+      max-width: 100%;
+      height: auto;
+      background: #ffffff;
+    }
+
+    .canvas-empty {
+      display: grid;
+      place-items: center;
+      gap: 10px;
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .canvas-empty svg {
+      width: 40px;
+      height: 40px;
+    }
+
+    .status-panel {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+    }
+
+    .status-message {
+      min-height: 42px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      color: var(--muted);
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .status-message.ok {
+      color: var(--teal-dark);
+      background: var(--teal-soft);
+      border-color: #a8d9d3;
+    }
+
+    .status-message.warn {
+      color: var(--amber);
+      background: var(--amber-soft);
+      border-color: #e8c875;
+    }
+
+    .status-message.error {
+      color: var(--red);
+      background: var(--red-soft);
+      border-color: #f1a9a4;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .step {
+      min-height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .step.active {
+      border-color: #a8d9d3;
+      background: var(--teal-soft);
+      color: var(--teal-dark);
+      font-weight: 700;
+    }
+
+    .step.done {
+      border-color: #bcd0ff;
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      min-height: 54px;
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      display: grid;
+      gap: 4px;
+    }
+
+    .metric span {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .metric strong {
+      font-size: 15px;
+      overflow-wrap: anywhere;
+    }
+
+    .result-actions {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .results {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      background: #fbfcfd;
+    }
+
+    .result-empty {
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+
+    .result-item {
+      padding: 10px;
+      display: grid;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .result-item:hover,
+    .result-item.active {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .result-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .result-text {
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .raw-text {
+      min-height: 92px;
+      max-height: 170px;
+      margin: 0;
+      padding: 10px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      font-family: Consolas, "Microsoft YaHei", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 16px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .footer strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .hidden,
+    .svg-sprite {
+      display: none !important;
+    }
+
+    @media (max-width: 1120px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .preview-pane,
+      .result-pane {
+        min-height: auto;
+      }
+
+      .results {
+        max-height: 380px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .app-header,
+      .pane-head,
+      .drop-zone,
+      .footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .top-controls,
+      .button-row,
+      .result-actions,
+      .field,
+      select,
+      .btn {
+        width: 100%;
+      }
+
+      .workspace {
+        padding: 10px;
+        gap: 10px;
+      }
+
+      .steps,
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .canvas-shell {
+        min-height: 320px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" class="svg-sprite">
+    <symbol id="icon-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M20 16v4H4v-4"></path>
+    </symbol>
+    <symbol id="icon-image" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="8" cy="10" r="2"></circle><path d="m21 16-5-5L5 19"></path>
+    </symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M8 5v14l11-7Z"></path>
+    </symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <rect x="9" y="9" width="11" height="11" rx="2"></rect><rect x="4" y="4" width="11" height="11" rx="2"></rect>
+    </symbol>
+    <symbol id="icon-download" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M20 11a8 8 0 1 0-2.34 5.66"></path><path d="M20 4v7h-7"></path>
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path>
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>
+    </symbol>
+    <symbol id="icon-box" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M4 7 12 3l8 4-8 4Z"></path><path d="M4 7v10l8 4 8-4V7"></path><path d="M12 11v10"></path>
+    </symbol>
+    <symbol id="icon-paste" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M8 4h8"></path><path d="M9 2h6v4H9z"></path><path d="M8 4H6a2 2 0 0 0-2 2v14h16V6a2 2 0 0 0-2-2h-2"></path>
+    </symbol>
+    <symbol id="icon-fit" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+      <path d="M4 9V4h5"></path><path d="M20 9V4h-5"></path><path d="M4 15v5h5"></path><path d="M20 15v5h-5"></path>
+    </symbol>
+  </svg>
+
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <h1>PaddleOCR-V6 离线工作台</h1>
+        <p>浏览器本地推理，支持截图粘贴和离线模型</p>
+      </div>
+      <div class="top-controls">
+        <span id="runtimeChip" class="chip warn">检测资源</span>
+        <label class="field">
+          <span>模型档位</span>
+          <select id="modelSelect">
+            <option value="tiny" selected>PP-OCRv6 tiny（快速）</option>
+            <option value="small">PP-OCRv6 small（高精度/最终版）</option>
+          </select>
+        </label>
+        <label class="toggle" title="粘贴图片后自动开始识别">
+          <input id="autoRunToggle" type="checkbox" checked>
+          粘贴后自动识别
+        </label>
+        <button id="preloadBtn" class="btn" type="button">
+          <svg><use href="#icon-box"></use></svg>
+          预加载
+        </button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="pane preview-pane">
+        <div class="pane-head">
+          <div class="pane-title">
+            <svg><use href="#icon-image"></use></svg>
+            图片预览
+          </div>
+          <div class="button-row">
+            <button id="pickBtn" class="btn" type="button">
+              <svg><use href="#icon-upload"></use></svg>
+              选择图片
+            </button>
+            <button id="pasteBtn" class="btn" type="button">
+              <svg><use href="#icon-paste"></use></svg>
+              粘贴截图
+            </button>
+            <button id="fitBtn" class="btn" type="button">
+              <svg><use href="#icon-fit"></use></svg>
+              适配宽度
+            </button>
+            <button id="runBtn" class="btn primary" type="button" disabled>
+              <svg><use href="#icon-play"></use></svg>
+              识别
+            </button>
+            <button id="clearBtn" class="btn icon-only" type="button" title="清空" aria-label="清空">
+              <svg><use href="#icon-trash"></use></svg>
+            </button>
+          </div>
+        </div>
+
+        <input id="fileInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/bmp">
+
+        <div id="dropZone" class="drop-zone" tabindex="0">
+          <div class="drop-main">
+            <div class="drop-icon">
+              <svg><use href="#icon-upload"></use></svg>
+            </div>
+            <div class="drop-text">
+              <strong>截图后直接按 Ctrl+V，或拖入图片</strong>
+              <span>支持 PNG、JPG、WebP、BMP；识别结果会按行列出并在图片上标框</span>
+            </div>
+          </div>
+          <span class="chip" id="imageChip">未选择图片</span>
+        </div>
+
+        <div id="canvasShell" class="canvas-shell fit-width">
+          <canvas id="previewCanvas"></canvas>
+          <div id="canvasEmpty" class="canvas-empty">
+            <svg><use href="#icon-image"></use></svg>
+            <div>等待图片输入</div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="pane result-pane">
+        <div class="pane-head">
+          <div class="pane-title">
+            <svg><use href="#icon-box"></use></svg>
+            识别结果
+          </div>
+          <span id="countChip" class="chip">0 行</span>
+        </div>
+
+        <div class="status-panel">
+          <div id="statusMessage" class="status-message warn">已加载本地页面，选择或粘贴图片后开始识别。</div>
+          <div class="steps">
+            <div class="step" data-step="input">图片</div>
+            <div class="step" data-step="engine">引擎</div>
+            <div class="step" data-step="ocr">识别</div>
+            <div class="step" data-step="done">完成</div>
+          </div>
+          <div class="metrics">
+            <div class="metric">
+              <span><svg><use href="#icon-clock"></use></svg>初始化</span>
+              <strong id="initMetric">-</strong>
+            </div>
+            <div class="metric">
+              <span><svg><use href="#icon-clock"></use></svg>识别耗时</span>
+              <strong id="ocrMetric">-</strong>
+            </div>
+            <div class="metric">
+              <span><svg><use href="#icon-image"></use></svg>图片尺寸</span>
+              <strong id="sizeMetric">-</strong>
+            </div>
+            <div class="metric">
+              <span><svg><use href="#icon-box"></use></svg>资源模式</span>
+              <strong id="assetMetric">检测中</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <button id="copyBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-copy"></use></svg>
+            复制文本
+          </button>
+          <button id="exportBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-download"></use></svg>
+            导出 JSON
+          </button>
+          <button id="redrawBtn" class="btn" type="button" disabled>
+            <svg><use href="#icon-refresh"></use></svg>
+            重绘
+          </button>
+        </div>
+
+        <div id="results" class="results">
+          <div class="result-empty">暂无结果</div>
+        </div>
+
+        <pre id="rawText" class="raw-text">识别完成后，这里会显示可复制的纯文本。</pre>
+      </aside>
+    </main>
+
+    <footer class="footer">
+      <span>模型：<strong id="footerModel">PP-OCRv6 tiny</strong></span>
+      <span id="footerStatus">就绪</span>
+    </footer>
+  </div>
+
+  <script type="module">
+    const EMBEDDED = globalThis.__PADDLEOCR_OFFLINE_EMBEDDED__ || {
+      singleFile: false,
+      ortWasmBase64: "",
+      models: {}
+    };
+
+    const OCR_CONFIG = {
+      localModuleUrl: "./assets/vendor/paddleocr-offline.bundle.mjs",
+      lang: "ch",
+      worker: false
+    };
+
+    const MODEL_CATALOG = {
+      tiny: {
+        label: "PP-OCRv6 tiny（快速）",
+        detName: "PP-OCRv6_tiny_det",
+        recName: "PP-OCRv6_tiny_rec",
+        detUrl: "./assets/models/PP-OCRv6_tiny_det_onnx_infer.tar",
+        recUrl: "./assets/models/PP-OCRv6_tiny_rec_onnx_infer.tar"
+      },
+      small: {
+        label: "PP-OCRv6 small（高精度/最终版）",
+        detName: "PP-OCRv6_small_det",
+        recName: "PP-OCRv6_small_rec",
+        detUrl: "./assets/models/PP-OCRv6_small_det_onnx_infer.tar",
+        recUrl: "./assets/models/PP-OCRv6_small_rec_onnx_infer.tar"
+      }
+    };
+
+    const state = {
+      imageBlob: null,
+      imageName: "",
+      imageBitmap: null,
+      imageUrl: "",
+      imageWidth: 0,
+      imageHeight: 0,
+      imageSize: 0,
+      displayScale: 1,
+      results: [],
+      rawOutput: null,
+      engine: null,
+      engineKey: "",
+      status: "idle",
+      step: "input",
+      highlightedIndex: -1,
+      wasmBinary: null,
+      fitWidth: true,
+      timings: {
+        initMs: null,
+        ocrMs: null
+      }
+    };
+
+    const els = {
+      runtimeChip: document.getElementById("runtimeChip"),
+      modelSelect: document.getElementById("modelSelect"),
+      autoRunToggle: document.getElementById("autoRunToggle"),
+      preloadBtn: document.getElementById("preloadBtn"),
+      pickBtn: document.getElementById("pickBtn"),
+      pasteBtn: document.getElementById("pasteBtn"),
+      fitBtn: document.getElementById("fitBtn"),
+      runBtn: document.getElementById("runBtn"),
+      clearBtn: document.getElementById("clearBtn"),
+      fileInput: document.getElementById("fileInput"),
+      dropZone: document.getElementById("dropZone"),
+      imageChip: document.getElementById("imageChip"),
+      canvasShell: document.getElementById("canvasShell"),
+      previewCanvas: document.getElementById("previewCanvas"),
+      canvasEmpty: document.getElementById("canvasEmpty"),
+      statusMessage: document.getElementById("statusMessage"),
+      initMetric: document.getElementById("initMetric"),
+      ocrMetric: document.getElementById("ocrMetric"),
+      sizeMetric: document.getElementById("sizeMetric"),
+      assetMetric: document.getElementById("assetMetric"),
+      countChip: document.getElementById("countChip"),
+      copyBtn: document.getElementById("copyBtn"),
+      exportBtn: document.getElementById("exportBtn"),
+      redrawBtn: document.getElementById("redrawBtn"),
+      results: document.getElementById("results"),
+      rawText: document.getElementById("rawText"),
+      footerModel: document.getElementById("footerModel"),
+      footerStatus: document.getElementById("footerStatus"),
+      steps: Array.from(document.querySelectorAll(".step"))
+    };
+
+    const ctx = els.previewCanvas.getContext("2d");
+
+    init();
+
+    function init() {
+      configureModelOptions();
+      updateRuntimeBadge();
+      bindEvents();
+      render();
+    }
+
+    function configureModelOptions() {
+      if (!EMBEDDED.singleFile) return;
+      const available = new Set(Object.keys(EMBEDDED.models || {}).map((key) => key.split(":")[0]));
+      for (const option of Array.from(els.modelSelect.options)) {
+        if (!available.has(option.value)) {
+          option.disabled = true;
+          option.textContent = `${MODEL_CATALOG[option.value].label}（目录版可用）`;
+        }
+      }
+      if (!available.has(els.modelSelect.value)) {
+        els.modelSelect.value = available.values().next().value || "tiny";
+      }
+    }
+
+    function bindEvents() {
+      els.pickBtn.addEventListener("click", () => els.fileInput.click());
+      els.dropZone.addEventListener("click", () => els.fileInput.click());
+      els.dropZone.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          els.fileInput.click();
+        }
+      });
+      els.fileInput.addEventListener("change", () => {
+        const file = els.fileInput.files?.[0];
+        if (file) loadImageFromBlob(file, "文件选择", false);
+        els.fileInput.value = "";
+      });
+
+      ["dragenter", "dragover"].forEach((eventName) => {
+        document.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          els.dropZone.classList.add("dragging");
+        });
+      });
+      ["dragleave", "drop"].forEach((eventName) => {
+        document.addEventListener(eventName, () => {
+          els.dropZone.classList.remove("dragging");
+        });
+      });
+      document.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type.startsWith("image/"));
+        if (!file) {
+          setMessage("没有找到可识别的图片文件。", "warn");
+          return;
+        }
+        loadImageFromBlob(file, "拖拽上传", false);
+      });
+
+      document.addEventListener("paste", handlePaste);
+      els.pasteBtn.addEventListener("click", readClipboardImage);
+      els.runBtn.addEventListener("click", runOcr);
+      els.preloadBtn.addEventListener("click", preloadEngine);
+      els.clearBtn.addEventListener("click", resetImage);
+      els.copyBtn.addEventListener("click", copyText);
+      els.exportBtn.addEventListener("click", exportJson);
+      els.redrawBtn.addEventListener("click", drawPreview);
+      els.fitBtn.addEventListener("click", toggleFitMode);
+      els.modelSelect.addEventListener("change", resetEngine);
+      window.addEventListener("resize", debounce(drawPreview, 120));
+      document.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          runOcr();
+        }
+        if (event.key === "Escape") resetImage();
+      });
+    }
+
+    async function handlePaste(event) {
+      if (isEditable(event.target)) return;
+      const items = Array.from(event.clipboardData?.items || []);
+      const imageItem = items.find((item) => item.type.startsWith("image/"));
+      if (!imageItem) return;
+      event.preventDefault();
+      const file = imageItem.getAsFile();
+      if (!file) {
+        setMessage("无法读取剪贴板图片，请改用文件选择。", "error");
+        return;
+      }
+      await loadImageFromBlob(file, "剪贴板粘贴", els.autoRunToggle.checked);
+    }
+
+    async function readClipboardImage() {
+      if (!navigator.clipboard?.read) {
+        setMessage("当前浏览器不支持主动读取剪贴板，请直接按 Ctrl+V 粘贴截图。", "warn");
+        return;
+      }
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const type = item.types.find((value) => value.startsWith("image/"));
+          if (type) {
+            const blob = await item.getType(type);
+            await loadImageFromBlob(blob, "剪贴板读取", els.autoRunToggle.checked);
+            return;
+          }
+        }
+        setMessage("剪贴板里没有图片。", "warn");
+      } catch (error) {
+        setMessage(`剪贴板读取失败：${messageOf(error)}`, "error");
+      }
+    }
+
+    function isEditable(target) {
+      if (!target) return false;
+      const tag = target.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable;
+    }
+
+    async function loadImageFromBlob(blob, source, autoRun) {
+      if (!blob.type.startsWith("image/")) {
+        setMessage("当前文件不是图片格式。", "error");
+        return;
+      }
+
+      setStep("input");
+      setBusy(true, "正在解码图片...");
+      revokeImageUrl();
+
+      try {
+        const bitmap = await decodeImage(blob);
+        state.imageBlob = blob;
+        state.imageName = blob.name || `${source}-${formatDateForFile()}.png`;
+        state.imageBitmap = bitmap;
+        state.imageUrl = URL.createObjectURL(blob);
+        state.imageWidth = bitmap.width;
+        state.imageHeight = bitmap.height;
+        state.imageSize = blob.size || 0;
+        state.results = [];
+        state.rawOutput = null;
+        state.highlightedIndex = -1;
+        state.timings.ocrMs = null;
+        state.status = "image-ready";
+        setMessage(`${source}成功，图片已准备好。`, "ok");
+        drawPreview();
+        render();
+        if (autoRun) await runOcr();
+      } catch (error) {
+        console.error(error);
+        setMessage(`图片解码失败：${messageOf(error)}`, "error");
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
+    async function decodeImage(blob) {
+      if ("createImageBitmap" in window) return await createImageBitmap(blob);
+      const url = URL.createObjectURL(blob);
+      try {
+        const image = new Image();
+        image.decoding = "async";
+        image.src = url;
+        await image.decode();
+        return image;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    async function preloadEngine() {
+      try {
+        setStep("engine");
+        await ensureEngine();
+        setStep(state.imageBlob ? "input" : "engine");
+        setMessage("OCR 引擎已初始化。", "ok");
+      } catch (error) {
+        console.error(error);
+        state.status = "error";
+        setMessage(messageOfOcrError(error), "error");
+      } finally {
+        render();
+      }
+    }
+
+    async function runOcr() {
+      if (!state.imageBlob) {
+        setMessage("请先选择、拖入或粘贴一张图片。", "warn");
+        return;
+      }
+      if (state.status === "recognizing") return;
+
+      const startedAt = performance.now();
+      setBusy(true, "正在识别...");
+      state.status = "recognizing";
+      setStep("ocr");
+      render();
+
+      try {
+        const engine = await ensureEngine();
+        const output = await engine.predict(state.imageBlob);
+        const primaryResult = unwrapOcrResult(output);
+        state.rawOutput = output;
+        state.results = normalizeOcrOutput(primaryResult);
+        state.timings.ocrMs = Number(primaryResult?.metrics?.totalMs) || performance.now() - startedAt;
+        state.status = "done";
+        setStep("done");
+        setMessage(`识别完成，共 ${state.results.length} 行，${collectText().length} 个字符。`, "ok");
+        drawPreview();
+      } catch (error) {
+        console.error(error);
+        state.status = "error";
+        setMessage(messageOfOcrError(error), "error");
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
+    async function ensureEngine() {
+      const key = `${runtimeMode()}::${els.modelSelect.value}`;
+      if (state.engine && state.engineKey === key) return state.engine;
+
+      setStep("engine");
+      setBusy(true, "正在初始化 OCR 引擎...");
+      const startedAt = performance.now();
+
+      try {
+        const mod = await loadOcrModule();
+        const create = findCreateFunction(mod);
+        const options = buildOcrOptions();
+        state.engine = await create(options);
+        state.engineKey = key;
+        state.timings.initMs = performance.now() - startedAt;
+        return state.engine;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function loadOcrModule() {
+      if (globalThis.PaddleOCR) return { PaddleOCR: globalThis.PaddleOCR };
+      if (location.protocol === "file:") {
+        throw new Error("目录版请用 start.bat 启动；直接打开请使用 dist/paddleocr-v6-offline-tiny.html。");
+      }
+      return await import(OCR_CONFIG.localModuleUrl);
+    }
+
+    function findCreateFunction(mod) {
+      const create = mod?.PaddleOCR?.create || mod?.default?.create || mod?.create;
+      if (typeof create !== "function") {
+        throw new Error("没有在 PaddleOCR.js 模块中找到 create 方法。");
+      }
+      return create.bind(mod.PaddleOCR || mod.default || mod);
+    }
+
+    function buildOcrOptions() {
+      const model = resolveModel(els.modelSelect.value);
+      const ortOptions = {
+        backend: "wasm",
+        simd: true,
+        numThreads: 1,
+        proxy: false
+      };
+
+      if (EMBEDDED.ortWasmBase64) {
+        ortOptions.wasmBinary = getEmbeddedWasmBinary();
+      }
+
+      return {
+        lang: OCR_CONFIG.lang,
+        ocrVersion: "PP-OCRv6",
+        worker: OCR_CONFIG.worker,
+        ortOptions,
+        textDetectionModelName: model.detName,
+        textRecognitionModelName: model.recName,
+        textDetectionModelAsset: { url: model.detUrl },
+        textRecognitionModelAsset: { url: model.recUrl },
+        fetch: createAssetFetch()
+      };
+    }
+
+    function resolveModel(key) {
+      const base = MODEL_CATALOG[key] || MODEL_CATALOG.tiny;
+      const detEmbedded = EMBEDDED.models?.[`${key}:det`];
+      const recEmbedded = EMBEDDED.models?.[`${key}:rec`];
+      if (detEmbedded && recEmbedded) {
+        return {
+          ...base,
+          detUrl: `embedded://${key}/det`,
+          recUrl: `embedded://${key}/rec`
+        };
+      }
+      return base;
+    }
+
+    function createAssetFetch() {
+      return async (url, options) => {
+        const key = embeddedKeyFromUrl(String(url));
+        if (key) {
+          const base64 = EMBEDDED.models[key];
+          if (!base64) throw new Error(`内嵌模型缺失：${key}`);
+          return new Response(base64ToUint8Array(base64), {
+            status: 200,
+            headers: { "Content-Type": "application/x-tar" }
+          });
+        }
+        return fetch(url, options);
+      };
+    }
+
+    function embeddedKeyFromUrl(url) {
+      const match = /^embedded:\/\/([^/]+)\/(det|rec)$/.exec(url);
+      return match ? `${match[1]}:${match[2]}` : "";
+    }
+
+    function getEmbeddedWasmBinary() {
+      if (!state.wasmBinary) {
+        state.wasmBinary = base64ToUint8Array(EMBEDDED.ortWasmBase64).buffer;
+      }
+      return state.wasmBinary;
+    }
+
+    function resetEngine() {
+      const engine = state.engine;
+      if (engine?.destroy) engine.destroy();
+      if (engine?.dispose) engine.dispose();
+      state.engine = null;
+      state.engineKey = "";
+      state.timings.initMs = null;
+      state.timings.ocrMs = null;
+      state.results = [];
+      state.rawOutput = null;
+      state.status = state.imageBlob ? "image-ready" : "idle";
+      setStep(state.imageBlob ? "input" : "engine");
+      updateRuntimeBadge();
+      setMessage("模型设置已改变，下次识别会重新初始化。", "warn");
+      drawPreview();
+      render();
+    }
+
+    function unwrapOcrResult(output) {
+      if (Array.isArray(output) && output[0]?.items) return output[0];
+      return output;
+    }
+
+    function normalizeOcrOutput(output) {
+      const items = output?.items || output?.results || output?.result || output?.ocrResult || (Array.isArray(output) ? output : []);
+      return items.map((item, index) => {
+        const text = String(item?.text ?? item?.words ?? item?.label ?? item?.recText ?? "").trim();
+        const scoreValue = item?.score ?? item?.confidence ?? item?.probability ?? item?.recScore ?? null;
+        return {
+          index: index + 1,
+          text,
+          score: Number.isFinite(Number(scoreValue)) ? Number(scoreValue) : null,
+          poly: extractPoly(item),
+          raw: item
+        };
+      }).filter((item) => item.text || item.poly.length);
+    }
+
+    function extractPoly(item) {
+      const candidates = [item?.poly, item?.points, item?.box, item?.bbox, item?.boundingBox];
+      for (const candidate of candidates) {
+        const poly = normalizePoly(candidate);
+        if (poly.length >= 4) return poly;
+      }
+      return [];
+    }
+
+    function normalizePoly(value) {
+      if (!value) return [];
+      if (Array.isArray(value) && value.length >= 4 && value.every((point) => Array.isArray(point))) {
+        return value.map((point) => [Number(point[0]), Number(point[1])]).filter(validPoint);
+      }
+      if (Array.isArray(value) && value.length >= 8 && value.every((num) => Number.isFinite(Number(num)))) {
+        return [
+          [Number(value[0]), Number(value[1])],
+          [Number(value[2]), Number(value[3])],
+          [Number(value[4]), Number(value[5])],
+          [Number(value[6]), Number(value[7])]
+        ];
+      }
+      if (typeof value === "object") {
+        const x = Number(value.x ?? value.left);
+        const y = Number(value.y ?? value.top);
+        const width = Number(value.width ?? value.w);
+        const height = Number(value.height ?? value.h);
+        if ([x, y, width, height].every(Number.isFinite)) {
+          return [[x, y], [x + width, y], [x + width, y + height], [x, y + height]];
+        }
+      }
+      return [];
+    }
+
+    function validPoint(point) {
+      return Number.isFinite(point[0]) && Number.isFinite(point[1]);
+    }
+
+    function drawPreview() {
+      if (!state.imageBitmap) {
+        els.previewCanvas.style.display = "none";
+        els.canvasEmpty.classList.remove("hidden");
+        return;
+      }
+
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const maxSide = state.fitWidth ? Math.min(1600, Math.max(420, els.canvasShell.clientWidth - 24)) : 1600;
+      const scale = state.fitWidth
+        ? Math.min(1, maxSide / state.imageWidth)
+        : Math.min(1, 1600 / Math.max(state.imageWidth, state.imageHeight));
+      state.displayScale = scale;
+
+      const displayWidth = Math.max(1, Math.round(state.imageWidth * scale));
+      const displayHeight = Math.max(1, Math.round(state.imageHeight * scale));
+      els.previewCanvas.width = Math.round(displayWidth * dpr);
+      els.previewCanvas.height = Math.round(displayHeight * dpr);
+      els.previewCanvas.style.width = `${displayWidth}px`;
+      els.previewCanvas.style.height = `${displayHeight}px`;
+      els.previewCanvas.style.display = "block";
+      els.canvasEmpty.classList.add("hidden");
+
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+      ctx.clearRect(0, 0, state.imageWidth, state.imageHeight);
+      ctx.drawImage(state.imageBitmap, 0, 0);
+      drawBoxes();
+    }
+
+    function drawBoxes() {
+      const colors = ["#0f766e", "#2563eb", "#b45309", "#7c3aed", "#be123c", "#15803d"];
+      state.results.forEach((item, index) => {
+        if (!item.poly.length) return;
+        const active = state.highlightedIndex === index;
+        const color = colors[index % colors.length];
+        ctx.save();
+        ctx.lineWidth = active ? 4 / state.displayScale : 2 / state.displayScale;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = active ? "rgba(15, 118, 110, 0.16)" : "rgba(15, 118, 110, 0.08)";
+        ctx.beginPath();
+        item.poly.forEach(([x, y], pointIndex) => {
+          if (pointIndex === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        const [labelX, labelY] = item.poly[0];
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        const sx = labelX * state.displayScale * (window.devicePixelRatio || 1);
+        const sy = labelY * state.displayScale * (window.devicePixelRatio || 1);
+        ctx.fillStyle = color;
+        ctx.font = `${12 * (window.devicePixelRatio || 1)}px ${getComputedStyle(document.body).fontFamily}`;
+        ctx.fillText(String(index + 1), sx + 4, Math.max(16, sy - 5));
+        ctx.restore();
+        ctx.setTransform((window.devicePixelRatio || 1) * state.displayScale, 0, 0, (window.devicePixelRatio || 1) * state.displayScale, 0, 0);
+      });
+    }
+
+    function toggleFitMode() {
+      state.fitWidth = !state.fitWidth;
+      els.canvasShell.classList.toggle("fit-width", state.fitWidth);
+      els.fitBtn.lastChild.textContent = state.fitWidth ? "适配宽度" : "原始比例";
+      drawPreview();
+    }
+
+    async function copyText() {
+      const text = collectText();
+      if (!text) {
+        setMessage("没有可复制的识别文本。", "warn");
+        return;
+      }
+      try {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+        else fallbackCopy(text);
+        setMessage("已复制识别文本。", "ok");
+      } catch {
+        fallbackCopy(text);
+        setMessage("已使用兼容方式复制文本。", "ok");
+      }
+    }
+
+    function fallbackCopy(text) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+
+    function exportJson() {
+      const payload = {
+        app: "PaddleOCR-V6 offline browser",
+        runtimeMode: runtimeMode(),
+        model: els.modelSelect.value,
+        image: {
+          name: state.imageName,
+          type: state.imageBlob?.type || "",
+          size: state.imageSize,
+          width: state.imageWidth,
+          height: state.imageHeight
+        },
+        timings: state.timings,
+        text: collectText(),
+        results: state.results.map(({ index, text, score, poly }) => ({ index, text, score, poly }))
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `paddleocr-v6-result-${formatDateForFile()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function resetImage() {
+      revokeImageUrl();
+      state.imageBlob = null;
+      state.imageName = "";
+      state.imageBitmap = null;
+      state.imageWidth = 0;
+      state.imageHeight = 0;
+      state.imageSize = 0;
+      state.results = [];
+      state.rawOutput = null;
+      state.highlightedIndex = -1;
+      state.timings.ocrMs = null;
+      state.status = "idle";
+      setStep("input");
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, els.previewCanvas.width, els.previewCanvas.height);
+      setMessage("已清空。", "warn");
+      drawPreview();
+      render();
+    }
+
+    function revokeImageUrl() {
+      if (state.imageUrl) {
+        URL.revokeObjectURL(state.imageUrl);
+        state.imageUrl = "";
+      }
+    }
+
+    function render() {
+      const hasImage = Boolean(state.imageBlob);
+      const hasResults = state.results.length > 0;
+      const currentModel = MODEL_CATALOG[els.modelSelect.value] || MODEL_CATALOG.tiny;
+      els.runBtn.disabled = !hasImage || state.status === "recognizing";
+      els.copyBtn.disabled = !hasResults;
+      els.exportBtn.disabled = !hasResults;
+      els.redrawBtn.disabled = !hasImage;
+      els.imageChip.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight}` : "未选择图片";
+      els.imageChip.className = `chip ${hasImage ? "ok" : ""}`;
+      els.countChip.textContent = `${state.results.length} 行`;
+      els.initMetric.textContent = state.timings.initMs == null ? "-" : formatMs(state.timings.initMs);
+      els.ocrMetric.textContent = state.timings.ocrMs == null ? "-" : formatMs(state.timings.ocrMs);
+      els.sizeMetric.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight} / ${formatBytes(state.imageSize)}` : "-";
+      els.assetMetric.textContent = runtimeLabel();
+      els.footerModel.textContent = currentModel.label;
+      els.rawText.textContent = hasResults ? collectText() : "识别完成后，这里会显示可复制的纯文本。";
+      renderSteps();
+      renderResults();
+    }
+
+    function renderSteps() {
+      const order = ["input", "engine", "ocr", "done"];
+      const activeIndex = order.indexOf(state.step);
+      els.steps.forEach((node) => {
+        const step = node.dataset.step;
+        const index = order.indexOf(step);
+        node.className = "step";
+        if (index < activeIndex || state.step === "done") node.classList.add("done");
+        if (step === state.step) node.classList.add("active");
+      });
+    }
+
+    function renderResults() {
+      if (!state.results.length) {
+        els.results.innerHTML = `<div class="result-empty">暂无结果</div>`;
+        return;
+      }
+
+      els.results.innerHTML = "";
+      state.results.forEach((item, index) => {
+        const node = document.createElement("div");
+        node.className = `result-item ${state.highlightedIndex === index ? "active" : ""}`;
+        node.innerHTML = `
+          <div class="result-meta">
+            <span>#${index + 1}</span>
+            <span>${formatScore(item.score)}</span>
+          </div>
+          <div class="result-text"></div>
+        `;
+        node.querySelector(".result-text").textContent = item.text || "(无文本)";
+        node.addEventListener("mouseenter", () => {
+          state.highlightedIndex = index;
+          renderResults();
+          drawPreview();
+        });
+        node.addEventListener("mouseleave", () => {
+          state.highlightedIndex = -1;
+          renderResults();
+          drawPreview();
+        });
+        node.addEventListener("click", () => {
+          state.highlightedIndex = index;
+          drawPreview();
+          node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        els.results.appendChild(node);
+      });
+    }
+
+    function setBusy(isBusy, text = "") {
+      document.body.style.cursor = isBusy ? "progress" : "";
+      els.footerStatus.textContent = text || footerText();
+      els.preloadBtn.disabled = isBusy;
+      els.pasteBtn.disabled = isBusy;
+      els.fitBtn.disabled = isBusy;
+      if (isBusy) els.runBtn.disabled = true;
+    }
+
+    function setStep(step) {
+      state.step = step;
+      renderSteps();
+    }
+
+    function setMessage(text, type = "warn") {
+      els.statusMessage.textContent = text;
+      els.statusMessage.className = `status-message ${type}`;
+      els.footerStatus.textContent = text;
+    }
+
+    function footerText() {
+      if (state.status === "idle") return "等待图片";
+      if (state.status === "image-ready") return "图片已准备";
+      if (state.status === "recognizing") return "识别中";
+      if (state.status === "done") return "识别完成";
+      if (state.status === "error") return "发生错误";
+      return "就绪";
+    }
+
+    function updateRuntimeBadge() {
+      els.runtimeChip.textContent = runtimeLabel();
+      els.runtimeChip.className = `chip ${runtimeMode() === "single-html" ? "ok" : "warn"}`;
+    }
+
+    function runtimeMode() {
+      return EMBEDDED.singleFile ? "single-html" : "local-assets";
+    }
+
+    function runtimeLabel() {
+      return EMBEDDED.singleFile ? "单 HTML 内嵌" : "本地目录资源";
+    }
+
+    function collectText() {
+      return state.results.map((item) => item.text).filter(Boolean).join("\n");
+    }
+
+    function formatScore(score) {
+      if (score == null) return "置信度 -";
+      return `置信度 ${(score * 100).toFixed(1)}%`;
+    }
+
+    function formatMs(value) {
+      if (!Number.isFinite(value)) return "-";
+      if (value < 1000) return `${Math.round(value)} ms`;
+      return `${(value / 1000).toFixed(2)} s`;
+    }
+
+    function formatBytes(value) {
+      if (!Number.isFinite(value) || value <= 0) return "-";
+      const units = ["B", "KB", "MB", "GB"];
+      let size = value;
+      let unit = 0;
+      while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit += 1;
+      }
+      return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function formatDateForFile() {
+      const now = new Date();
+      const pad = (num) => String(num).padStart(2, "0");
+      return [
+        now.getFullYear(),
+        pad(now.getMonth() + 1),
+        pad(now.getDate()),
+        "-",
+        pad(now.getHours()),
+        pad(now.getMinutes()),
+        pad(now.getSeconds())
+      ].join("");
+    }
+
+    function messageOf(error) {
+      return error?.message || String(error);
+    }
+
+    function messageOfOcrError(error) {
+      const text = messageOf(error);
+      if (location.protocol === "file:" && !EMBEDDED.singleFile) {
+        return `OCR 初始化失败：${text}。目录版需要通过 start.bat 启动本地服务。`;
+      }
+      return `OCR 初始化或识别失败：${text}`;
+    }
+
+    function base64ToUint8Array(base64) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    function debounce(fn, wait) {
+      let timer = 0;
+      return (...args) => {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => fn(...args), wait);
+      };
+    }
+  </script>
+</body>
+</html>

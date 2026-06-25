@@ -1,0 +1,13 @@
+node_modules/
+
+*.log
+server.out.log
+server.err.log
+
+.DS_Store
+Thumbs.db
+
+# Exploratory CDN downloads. The offline app uses paddleocr-offline.bundle.mjs.
+assets/vendor/paddleocr-js.bundle.mjs
+assets/vendor/paddleocr-js.esm.js
+assets/vendor/paddleocr-js.esmsh.bundle.mjs

@@ -1,0 +1,13 @@
+{
+  "scripts": {
+    "build:single": "node tools/build-single-html.js",
+    "build:tiny": "node tools/build-single-html.js --model=tiny",
+    "build:small": "node tools/build-single-html.js --model=small",
+    "build:final": "node tools/build-single-html.js --final",
+    "start": "node tools/serve.js"
+  },
+  "dependencies": {
+    "@paddleocr/paddleocr-js": "^0.4.2",
+    "esbuild": "^0.28.1"
+  }
+}
