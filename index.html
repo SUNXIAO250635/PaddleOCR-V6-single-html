@@ -273,6 +273,22 @@
       accent-color: var(--teal);
     }
 
+    .search-field {
+      flex: 1 1 180px;
+      min-width: 180px;
+      height: 36px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      color: var(--text);
+    }
+
+    .search-field:focus {
+      outline: 2px solid rgba(15, 118, 110, 0.18);
+      border-color: var(--teal);
+    }
+
     .drop-zone {
       margin: 12px;
       padding: 12px;
@@ -406,7 +422,7 @@
 
     .steps {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 6px;
     }
 
@@ -518,6 +534,13 @@
       overflow-wrap: anywhere;
     }
 
+    .result-text mark {
+      padding: 0 2px;
+      border-radius: 3px;
+      background: #ffe08a;
+      color: inherit;
+    }
+
     .raw-text {
       min-height: 92px;
       max-height: 170px;
@@ -598,6 +621,10 @@
         grid-template-columns: 1fr;
       }
 
+      .search-field {
+        width: 100%;
+      }
+
       .canvas-shell {
         min-height: 320px;
       }
@@ -659,6 +686,10 @@
         <label class="toggle" title="粘贴图片后自动开始识别">
           <input id="autoRunToggle" type="checkbox" checked>
           粘贴后自动识别
+        </label>
+        <label class="toggle" title="识别完成后自动复制纯文本">
+          <input id="autoCopyToggle" type="checkbox">
+          识别后自动复制
         </label>
         <button id="preloadBtn" class="btn" type="button">
           <svg><use href="#icon-box"></use></svg>
@@ -734,7 +765,9 @@
           <div id="statusMessage" class="status-message warn">已加载本地页面，选择或粘贴图片后开始识别。</div>
           <div class="steps">
             <div class="step" data-step="input">图片</div>
-            <div class="step" data-step="engine">引擎</div>
+            <div class="step" data-step="sdk">SDK</div>
+            <div class="step" data-step="wasm">WASM</div>
+            <div class="step" data-step="models">模型</div>
             <div class="step" data-step="ocr">识别</div>
             <div class="step" data-step="done">完成</div>
           </div>
@@ -759,6 +792,7 @@
         </div>
 
         <div class="result-actions">
+          <input id="resultSearch" class="search-field" type="search" placeholder="搜索结果文本" autocomplete="off">
           <button id="copyBtn" class="btn" type="button" disabled>
             <svg><use href="#icon-copy"></use></svg>
             复制文本
@@ -832,6 +866,7 @@
       engineKey: "",
       status: "idle",
       step: "input",
+      searchQuery: "",
       highlightedIndex: -1,
       wasmBinary: null,
       fitWidth: true,
@@ -845,6 +880,7 @@
       runtimeChip: document.getElementById("runtimeChip"),
       modelSelect: document.getElementById("modelSelect"),
       autoRunToggle: document.getElementById("autoRunToggle"),
+      autoCopyToggle: document.getElementById("autoCopyToggle"),
       preloadBtn: document.getElementById("preloadBtn"),
       pickBtn: document.getElementById("pickBtn"),
       pasteBtn: document.getElementById("pasteBtn"),
@@ -863,6 +899,7 @@
       sizeMetric: document.getElementById("sizeMetric"),
       assetMetric: document.getElementById("assetMetric"),
       countChip: document.getElementById("countChip"),
+      resultSearch: document.getElementById("resultSearch"),
       copyBtn: document.getElementById("copyBtn"),
       exportBtn: document.getElementById("exportBtn"),
       redrawBtn: document.getElementById("redrawBtn"),
@@ -943,6 +980,12 @@
       els.exportBtn.addEventListener("click", exportJson);
       els.redrawBtn.addEventListener("click", drawPreview);
       els.fitBtn.addEventListener("click", toggleFitMode);
+      els.resultSearch.addEventListener("input", () => {
+        state.searchQuery = els.resultSearch.value.trim();
+        state.highlightedIndex = -1;
+        render();
+        drawPreview();
+      });
       els.modelSelect.addEventListener("change", resetEngine);
       window.addEventListener("resize", debounce(drawPreview, 120));
       document.addEventListener("keydown", (event) => {
@@ -1016,6 +1059,8 @@
         state.imageSize = blob.size || 0;
         state.results = [];
         state.rawOutput = null;
+        state.searchQuery = "";
+        els.resultSearch.value = "";
         state.highlightedIndex = -1;
         state.timings.ocrMs = null;
         state.status = "image-ready";
@@ -1048,9 +1093,9 @@
 
     async function preloadEngine() {
       try {
-        setStep("engine");
+        setStep("sdk");
         await ensureEngine();
-        setStep(state.imageBlob ? "input" : "engine");
+        setStep(state.imageBlob ? "input" : "models");
         setMessage("OCR 引擎已初始化。", "ok");
       } catch (error) {
         console.error(error);
@@ -1083,7 +1128,18 @@
         state.timings.ocrMs = Number(primaryResult?.metrics?.totalMs) || performance.now() - startedAt;
         state.status = "done";
         setStep("done");
-        setMessage(`识别完成，共 ${state.results.length} 行，${collectText().length} 个字符。`, "ok");
+        const recognizedText = collectText();
+        let copyNote = "";
+        if (els.autoCopyToggle.checked && recognizedText) {
+          try {
+            await writeClipboardText(recognizedText);
+            copyNote = " 已自动复制。";
+          } catch (copyError) {
+            console.warn(copyError);
+            copyNote = " 自动复制失败。";
+          }
+        }
+        setMessage(`识别完成，共 ${state.results.length} 行，${recognizedText.length} 个字符。${copyNote}`, "ok");
         drawPreview();
       } catch (error) {
         console.error(error);
@@ -1099,14 +1155,18 @@
       const key = `${runtimeMode()}::${els.modelSelect.value}`;
       if (state.engine && state.engineKey === key) return state.engine;
 
-      setStep("engine");
-      setBusy(true, "正在初始化 OCR 引擎...");
+      setStep("sdk");
+      setBusy(true, "正在加载 PaddleOCR.js SDK...");
       const startedAt = performance.now();
 
       try {
         const mod = await loadOcrModule();
+        setStep("wasm");
+        setBusy(true, "正在准备 ONNX Runtime WASM...");
         const create = findCreateFunction(mod);
         const options = buildOcrOptions();
+        setStep("models");
+        setBusy(true, "正在加载 PP-OCRv6 检测和识别模型...");
         state.engine = await create(options);
         state.engineKey = key;
         state.timings.initMs = performance.now() - startedAt;
@@ -1349,13 +1409,20 @@
         return;
       }
       try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
-        else fallbackCopy(text);
+        await writeClipboardText(text);
         setMessage("已复制识别文本。", "ok");
       } catch {
         fallbackCopy(text);
         setMessage("已使用兼容方式复制文本。", "ok");
       }
+    }
+
+    async function writeClipboardText(text) {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      fallbackCopy(text);
     }
 
     function fallbackCopy(text) {
@@ -1429,13 +1496,16 @@
       const hasImage = Boolean(state.imageBlob);
       const hasResults = state.results.length > 0;
       const currentModel = MODEL_CATALOG[els.modelSelect.value] || MODEL_CATALOG.tiny;
+      const filteredResults = getFilteredResults();
       els.runBtn.disabled = !hasImage || state.status === "recognizing";
       els.copyBtn.disabled = !hasResults;
       els.exportBtn.disabled = !hasResults;
       els.redrawBtn.disabled = !hasImage;
       els.imageChip.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight}` : "未选择图片";
       els.imageChip.className = `chip ${hasImage ? "ok" : ""}`;
-      els.countChip.textContent = `${state.results.length} 行`;
+      els.countChip.textContent = state.searchQuery
+        ? `${filteredResults.length}/${state.results.length} 行`
+        : `${state.results.length} 行`;
       els.initMetric.textContent = state.timings.initMs == null ? "-" : formatMs(state.timings.initMs);
       els.ocrMetric.textContent = state.timings.ocrMs == null ? "-" : formatMs(state.timings.ocrMs);
       els.sizeMetric.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight} / ${formatBytes(state.imageSize)}` : "-";
@@ -1447,7 +1517,7 @@
     }
 
     function renderSteps() {
-      const order = ["input", "engine", "ocr", "done"];
+      const order = ["input", "sdk", "wasm", "models", "ocr", "done"];
       const activeIndex = order.indexOf(state.step);
       els.steps.forEach((node) => {
         const step = node.dataset.step;
@@ -1459,13 +1529,19 @@
     }
 
     function renderResults() {
+      const results = getFilteredResults();
       if (!state.results.length) {
         els.results.innerHTML = `<div class="result-empty">暂无结果</div>`;
         return;
       }
+      if (!results.length) {
+        els.results.innerHTML = `<div class="result-empty">没有匹配“${escapeHtml(state.searchQuery)}”的结果</div>`;
+        return;
+      }
 
       els.results.innerHTML = "";
-      state.results.forEach((item, index) => {
+      results.forEach((item) => {
+        const index = item.index - 1;
         const node = document.createElement("div");
         node.className = `result-item ${state.highlightedIndex === index ? "active" : ""}`;
         node.innerHTML = `
@@ -1475,7 +1551,7 @@
           </div>
           <div class="result-text"></div>
         `;
-        node.querySelector(".result-text").textContent = item.text || "(无文本)";
+        renderHighlightedText(node.querySelector(".result-text"), item.text || "(无文本)", state.searchQuery);
         node.addEventListener("mouseenter", () => {
           state.highlightedIndex = index;
           renderResults();
@@ -1493,6 +1569,50 @@
         });
         els.results.appendChild(node);
       });
+    }
+
+    function getFilteredResults() {
+      const query = state.searchQuery.trim().toLowerCase();
+      if (!query) return state.results;
+      return state.results.filter((item) => {
+        return String(item.text || "").toLowerCase().includes(query);
+      });
+    }
+
+    function renderHighlightedText(container, text, query) {
+      container.textContent = "";
+      const needle = query.trim();
+      if (!needle) {
+        container.textContent = text;
+        return;
+      }
+
+      const lowerText = text.toLowerCase();
+      const lowerNeedle = needle.toLowerCase();
+      let cursor = 0;
+      while (cursor < text.length) {
+        const hit = lowerText.indexOf(lowerNeedle, cursor);
+        if (hit === -1) {
+          container.appendChild(document.createTextNode(text.slice(cursor)));
+          break;
+        }
+        if (hit > cursor) {
+          container.appendChild(document.createTextNode(text.slice(cursor, hit)));
+        }
+        const mark = document.createElement("mark");
+        mark.textContent = text.slice(hit, hit + needle.length);
+        container.appendChild(mark);
+        cursor = hit + needle.length;
+      }
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
     }
 
     function setBusy(isBusy, text = "") {
