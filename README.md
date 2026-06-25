@@ -335,23 +335,3 @@ node --check tools/build-single-html.js
 node --check tools/serve.js
 node --check assets/vendor/paddleocr-v6-offline-api.mjs
 ```
-
-## 推送到 GitHub
-
-初始化仓库：
-
-```bash
-git init
-git branch -M main
-git add .
-git commit -m "feat: add offline PaddleOCR V6 single HTML app"
-```
-
-设置远程并推送：
-
-```bash
-git remote add origin https://github.com/SUNXIAO250635/PaddleOCR-V6-single-html.git
-git push -u origin main
-```
-
-如果 GitHub 要求登录，请使用 GitHub CLI、浏览器认证或 Personal Access Token 完成授权。
