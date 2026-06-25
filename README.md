@@ -5,7 +5,7 @@
 - 本地目录版：`index.html + assets/`，通过本地 HTTP 服务运行，支持 `tiny` 和 `small` 两档模型。
 - 单 HTML 版：把页面、SDK、ONNX wasm、模型全部内嵌到一个 HTML 文件中，可直接打开使用。
 
-页面支持图片选择、拖拽上传、截图后 `Ctrl+V` 粘贴、粘贴后自动识别、识别后自动复制、结果搜索/高亮、细粒度加载阶段提示、Canvas 标框、文本复制、JSON 导出。
+页面支持图片/PDF 选择、拖拽上传、截图后 `Ctrl+V` 粘贴、粘贴后自动识别、识别后自动复制、多图/PDF 批量识别、结果搜索/高亮、细粒度加载阶段提示、Canvas 标框、文本复制、JSON 导出。
 
 ## 目录结构
 
@@ -20,6 +20,8 @@
 │   └── vendor/
 │       ├── ort-wasm-simd-threaded.jsep.wasm
 │       ├── paddleocr-offline.bundle.mjs
+│       ├── pdf.min.mjs
+│       ├── pdf.worker.min.mjs
 │       └── paddleocr-v6-offline-api.mjs
 ├── dist/
 │   ├── paddleocr-v6-offline-tiny.html
@@ -85,10 +87,10 @@ http://127.0.0.1:8765/
 ### 4. 使用 OCR
 
 1. 选择 `PP-OCRv6 tiny（快速）` 或 `PP-OCRv6 small（高精度/最终版）`。
-2. 拖入图片、点击选择图片，或截图后直接按 `Ctrl+V`。
+2. 拖入图片/PDF、点击选择图片/PDF，或截图后直接按 `Ctrl+V`。文件选择和拖拽支持一次加入多张图片或 PDF。
 3. 默认开启“粘贴后自动识别”。
 4. 可按需开启“识别后自动复制”。
-5. 识别后可搜索结果文本、复制纯文本或导出 JSON。
+5. 单张图片或 PDF 页面可点“识别”，多张图片或多页 PDF 可点“识别全部”。识别后可搜索当前页面结果、复制纯文本或导出 JSON。
 
 ## 是否需要 npm install
 
@@ -99,6 +101,15 @@ http://127.0.0.1:8765/
 ```bash
 npm install
 ```
+
+## 多图和 PDF 批量识别
+
+- 通过文件选择或拖拽可以一次加入多张图片。
+- PDF 会在浏览器本地通过 PDF.js 渲染成图片页，再加入同一个识别队列；不会上传文件，也不依赖外网。
+- 图片数量超过 1 张时，预览区会显示图片队列；点击队列项可切换当前预览和结果。
+- “识别”只处理当前图片，“识别全部”会按队列顺序逐张识别，并复用同一个 OCR 引擎。
+- “复制文本”在多图场景下会复制所有已识别图片的文本，并按图片名称分组。
+- “导出 JSON”会同时包含当前图片结果和 `batch` 数组，便于其他程序读取全部图片的识别结果。
 
 ## 编译成品
 
@@ -112,6 +123,8 @@ tools/build-single-html.js
 
 - `index.html`
 - `assets/vendor/paddleocr-offline.bundle.mjs`
+- `assets/vendor/pdf.min.mjs`
+- `assets/vendor/pdf.worker.min.mjs`
 - `assets/vendor/ort-wasm-simd-threaded.jsep.wasm`
 - `assets/models/*.tar`
 

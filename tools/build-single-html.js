@@ -6,6 +6,8 @@ const distDir = path.join(root, "dist");
 
 const indexPath = path.join(root, "index.html");
 const sdkPath = path.join(root, "assets", "vendor", "paddleocr-offline.bundle.mjs");
+const pdfPath = path.join(root, "assets", "vendor", "pdf.min.mjs");
+const pdfWorkerPath = path.join(root, "assets", "vendor", "pdf.worker.min.mjs");
 const wasmPath = path.join(root, "assets", "vendor", "ort-wasm-simd-threaded.jsep.wasm");
 const tinyDetPath = path.join(root, "assets", "models", "PP-OCRv6_tiny_det_onnx_infer.tar");
 const tinyRecPath = path.join(root, "assets", "models", "PP-OCRv6_tiny_rec_onnx_infer.tar");
@@ -63,6 +65,7 @@ function main() {
   const embeddedConfig = {
     singleFile: true,
     ortWasmBase64: readBase64(wasmPath),
+    pdfWorkerBase64: readBase64(pdfWorkerPath),
     models: {}
   };
 
@@ -77,9 +80,13 @@ function main() {
   }
 
   const sdkModule = makeBrowserSdkModule(readText(sdkPath));
+  const pdfModule = readText(pdfPath);
   const scripts = [
     "  <script>",
     `    globalThis.__PADDLEOCR_OFFLINE_EMBEDDED__ = ${JSON.stringify(embeddedConfig)};`,
+    "  </script>",
+    "  <script type=\"module\">",
+    pdfModule,
     "  </script>",
     "  <script type=\"module\">",
     sdkModule,

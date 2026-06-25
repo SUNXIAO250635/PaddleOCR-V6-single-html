@@ -175,7 +175,7 @@
     .preview-pane {
       min-height: 650px;
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto auto 1fr;
     }
 
     .result-pane {
@@ -306,6 +306,67 @@
     .drop-zone:focus-visible {
       border-color: var(--teal);
       background: var(--teal-soft);
+    }
+
+    .image-queue {
+      margin: 0 12px 12px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 8px;
+    }
+
+    .queue-item {
+      min-width: 0;
+      min-height: 64px;
+      padding: 8px;
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      text-align: left;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .queue-item:hover,
+    .queue-item.active {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .queue-thumb {
+      width: 46px;
+      height: 46px;
+      object-fit: cover;
+      border-radius: 6px;
+      background: #e8eef2;
+    }
+
+    .queue-meta {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+      align-content: center;
+    }
+
+    .queue-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+      font-size: 12px;
+    }
+
+    .queue-status {
+      color: var(--muted);
+      font-size: 11px;
+      overflow-wrap: anywhere;
     }
 
     .drop-main {
@@ -722,13 +783,17 @@
               <svg><use href="#icon-play"></use></svg>
               识别
             </button>
+            <button id="runAllBtn" class="btn" type="button" disabled>
+              <svg><use href="#icon-play"></use></svg>
+              识别全部
+            </button>
             <button id="clearBtn" class="btn icon-only" type="button" title="清空" aria-label="清空">
               <svg><use href="#icon-trash"></use></svg>
             </button>
           </div>
         </div>
 
-        <input id="fileInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/bmp">
+        <input id="fileInput" class="hidden" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,application/pdf,.pdf" multiple>
 
         <div id="dropZone" class="drop-zone" tabindex="0">
           <div class="drop-main">
@@ -736,12 +801,14 @@
               <svg><use href="#icon-upload"></use></svg>
             </div>
             <div class="drop-text">
-              <strong>截图后直接按 Ctrl+V，或拖入图片</strong>
-              <span>支持 PNG、JPG、WebP、BMP；识别结果会按行列出并在图片上标框</span>
+              <strong>截图后直接按 Ctrl+V，或拖入图片/PDF</strong>
+              <span>支持 PNG、JPG、WebP、BMP、PDF；PDF 会按页加入识别队列</span>
             </div>
           </div>
           <span class="chip" id="imageChip">未选择图片</span>
         </div>
+
+        <div id="imageQueue" class="image-queue hidden"></div>
 
         <div id="canvasShell" class="canvas-shell fit-width">
           <canvas id="previewCanvas"></canvas>
@@ -825,6 +892,7 @@
     const EMBEDDED = globalThis.__PADDLEOCR_OFFLINE_EMBEDDED__ || {
       singleFile: false,
       ortWasmBase64: "",
+      pdfWorkerBase64: "",
       models: {}
     };
 
@@ -832,6 +900,13 @@
       localModuleUrl: "./assets/vendor/paddleocr-offline.bundle.mjs",
       lang: "ch",
       worker: false
+    };
+
+    const PDF_CONFIG = {
+      localModuleUrl: "./assets/vendor/pdf.min.mjs",
+      localWorkerUrl: "./assets/vendor/pdf.worker.min.mjs",
+      renderWidth: 1800,
+      maxScale: 2.5
     };
 
     const MODEL_CATALOG = {
@@ -852,6 +927,9 @@
     };
 
     const state = {
+      images: [],
+      activeImageId: "",
+      batchRunning: false,
       imageBlob: null,
       imageName: "",
       imageBitmap: null,
@@ -869,6 +947,7 @@
       searchQuery: "",
       highlightedIndex: -1,
       wasmBinary: null,
+      pdfWorkerUrl: "",
       fitWidth: true,
       timings: {
         initMs: null,
@@ -886,9 +965,11 @@
       pasteBtn: document.getElementById("pasteBtn"),
       fitBtn: document.getElementById("fitBtn"),
       runBtn: document.getElementById("runBtn"),
+      runAllBtn: document.getElementById("runAllBtn"),
       clearBtn: document.getElementById("clearBtn"),
       fileInput: document.getElementById("fileInput"),
       dropZone: document.getElementById("dropZone"),
+      imageQueue: document.getElementById("imageQueue"),
       imageChip: document.getElementById("imageChip"),
       canvasShell: document.getElementById("canvasShell"),
       previewCanvas: document.getElementById("previewCanvas"),
@@ -945,8 +1026,8 @@
         }
       });
       els.fileInput.addEventListener("change", () => {
-        const file = els.fileInput.files?.[0];
-        if (file) loadImageFromBlob(file, "文件选择", false);
+        const files = Array.from(els.fileInput.files || []).filter(isSupportedInputFile);
+        if (files.length) loadInputFiles(files, "文件选择", false);
         els.fileInput.value = "";
       });
 
@@ -963,17 +1044,18 @@
       });
       document.addEventListener("drop", (event) => {
         event.preventDefault();
-        const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type.startsWith("image/"));
-        if (!file) {
-          setMessage("没有找到可识别的图片文件。", "warn");
+        const files = Array.from(event.dataTransfer?.files || []).filter(isSupportedInputFile);
+        if (!files.length) {
+          setMessage("没有找到可识别的图片或 PDF 文件。", "warn");
           return;
         }
-        loadImageFromBlob(file, "拖拽上传", false);
+        loadInputFiles(files, "拖拽上传", false);
       });
 
       document.addEventListener("paste", handlePaste);
       els.pasteBtn.addEventListener("click", readClipboardImage);
       els.runBtn.addEventListener("click", runOcr);
+      els.runAllBtn.addEventListener("click", runAllOcr);
       els.preloadBtn.addEventListener("click", preloadEngine);
       els.clearBtn.addEventListener("click", resetImage);
       els.copyBtn.addEventListener("click", copyText);
@@ -1039,35 +1121,73 @@
     }
 
     async function loadImageFromBlob(blob, source, autoRun) {
-      if (!blob.type.startsWith("image/")) {
+      await loadImagesFromBlobs([blob], source, autoRun);
+    }
+
+    async function loadInputFiles(files, source, autoRun) {
+      const startCount = state.images.length;
+      const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+      const pdfFiles = files.filter(isPdfFile);
+
+      if (!imageFiles.length && !pdfFiles.length) {
+        setMessage("当前文件不是图片或 PDF 格式。", "error");
+        return;
+      }
+
+      if (imageFiles.length) {
+        await loadImagesFromBlobs(imageFiles, source, false);
+      }
+
+      for (const pdfFile of pdfFiles) {
+        await loadPdfFromBlob(pdfFile, source);
+      }
+
+      const addedCount = state.images.length - startCount;
+      if (addedCount > 0) {
+        setMessage(`${source}成功，已加入 ${addedCount} 个页面/图片。`, "ok");
+        if (autoRun) {
+          if (addedCount === 1) await runOcr();
+          else await runAllOcr();
+        }
+      }
+    }
+
+    function isSupportedInputFile(file) {
+      return file?.type?.startsWith("image/") || isPdfFile(file);
+    }
+
+    function isPdfFile(file) {
+      return file?.type === "application/pdf" || /\.pdf$/i.test(file?.name || "");
+    }
+
+    async function loadImagesFromBlobs(blobs, source, autoRun) {
+      const imageBlobs = blobs.filter((blob) => blob?.type?.startsWith("image/"));
+      if (!imageBlobs.length) {
         setMessage("当前文件不是图片格式。", "error");
         return;
       }
 
       setStep("input");
       setBusy(true, "正在解码图片...");
-      revokeImageUrl();
 
+      const added = [];
       try {
-        const bitmap = await decodeImage(blob);
-        state.imageBlob = blob;
-        state.imageName = blob.name || `${source}-${formatDateForFile()}.png`;
-        state.imageBitmap = bitmap;
-        state.imageUrl = URL.createObjectURL(blob);
-        state.imageWidth = bitmap.width;
-        state.imageHeight = bitmap.height;
-        state.imageSize = blob.size || 0;
-        state.results = [];
-        state.rawOutput = null;
+        for (const blob of imageBlobs) {
+          const item = await createImageItem(blob, blob.name || `${source}-${formatDateForFile()}.png`);
+          state.images.push(item);
+          added.push(item);
+        }
+
+        selectImage(added[added.length - 1].id);
         state.searchQuery = "";
         els.resultSearch.value = "";
-        state.highlightedIndex = -1;
-        state.timings.ocrMs = null;
-        state.status = "image-ready";
-        setMessage(`${source}成功，图片已准备好。`, "ok");
+        setMessage(`${source}成功，已加入 ${added.length} 张图片。`, "ok");
         drawPreview();
         render();
-        if (autoRun) await runOcr();
+        if (autoRun) {
+          if (added.length === 1) await runOcr();
+          else await runAllOcr();
+        }
       } catch (error) {
         console.error(error);
         setMessage(`图片解码失败：${messageOf(error)}`, "error");
@@ -1075,6 +1195,135 @@
         setBusy(false);
         render();
       }
+    }
+
+    async function loadPdfFromBlob(blob, source) {
+      setStep("input");
+      setBusy(true, `正在解析 PDF：${blob.name || source}`);
+
+      try {
+        const pdfjs = await loadPdfModule();
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const task = pdfjs.getDocument({
+          data: bytes,
+          useWorkerFetch: false,
+          isEvalSupported: false
+        });
+        const pdf = await task.promise;
+        const baseName = stripExtension(blob.name || `${source}-${formatDateForFile()}`);
+        const added = [];
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          setBusy(true, `正在渲染 PDF 第 ${pageNumber}/${pdf.numPages} 页...`);
+          const page = await pdf.getPage(pageNumber);
+          const pageBlob = await renderPdfPageToBlob(page);
+          const item = await createImageItem(pageBlob, `${baseName}-p${String(pageNumber).padStart(3, "0")}.png`);
+          state.images.push(item);
+          added.push(item);
+          page.cleanup?.();
+          render();
+        }
+
+        pdf.destroy?.();
+        if (added.length) {
+          selectImage(added[added.length - 1].id);
+          setMessage(`PDF 解析完成，已加入 ${added.length} 页。`, "ok");
+        }
+      } catch (error) {
+        console.error(error);
+        setMessage(`PDF 解析失败：${messageOf(error)}`, "error");
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
+    async function loadPdfModule() {
+      const pdfjs = globalThis.pdfjsLib || await import(PDF_CONFIG.localModuleUrl);
+      if (EMBEDDED.pdfWorkerBase64) {
+        pdfjs.GlobalWorkerOptions.workerSrc = embeddedPdfWorkerUrl();
+      } else {
+        pdfjs.GlobalWorkerOptions.workerSrc = PDF_CONFIG.localWorkerUrl;
+      }
+      return pdfjs;
+    }
+
+    function embeddedPdfWorkerUrl() {
+      if (!state.pdfWorkerUrl) {
+        const bytes = base64ToUint8Array(EMBEDDED.pdfWorkerBase64);
+        const blob = new Blob([bytes], { type: "text/javascript" });
+        state.pdfWorkerUrl = URL.createObjectURL(blob);
+      }
+      return state.pdfWorkerUrl;
+    }
+
+    async function renderPdfPageToBlob(page) {
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(PDF_CONFIG.maxScale, Math.max(1, PDF_CONFIG.renderWidth / baseViewport.width));
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d", { alpha: false });
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      return await canvasToBlob(canvas, "image/png");
+    }
+
+    function canvasToBlob(canvas, type) {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Canvas 转换图片失败。"));
+        }, type);
+      });
+    }
+
+    async function createImageItem(blob, name) {
+      const bitmap = await decodeImage(blob);
+      return {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        blob,
+        name,
+        bitmap,
+        url: URL.createObjectURL(blob),
+        width: bitmap.width,
+        height: bitmap.height,
+        size: blob.size || 0,
+        results: [],
+        rawOutput: null,
+        ocrMs: null,
+        status: "image-ready",
+        error: ""
+      };
+    }
+
+    function activeImage() {
+      return state.images.find((item) => item.id === state.activeImageId) || null;
+    }
+
+    function selectImage(id) {
+      const item = state.images.find((entry) => entry.id === id);
+      if (!item) return;
+      state.activeImageId = item.id;
+      state.highlightedIndex = -1;
+      syncActiveImageState(item);
+      drawPreview();
+      render();
+    }
+
+    function syncActiveImageState(item) {
+      if (!item) return;
+      state.imageBlob = item.blob;
+      state.imageName = item.name;
+      state.imageBitmap = item.bitmap;
+      state.imageUrl = item.url;
+      state.imageWidth = item.width;
+      state.imageHeight = item.height;
+      state.imageSize = item.size;
+      state.results = item.results || [];
+      state.rawOutput = item.rawOutput || null;
+      state.timings.ocrMs = item.ocrMs;
+      state.status = item.status || "image-ready";
     }
 
     async function decodeImage(blob) {
@@ -1111,7 +1360,7 @@
         setMessage("请先选择、拖入或粘贴一张图片。", "warn");
         return;
       }
-      if (state.status === "recognizing") return;
+      if (state.status === "recognizing" || state.batchRunning) return;
 
       const startedAt = performance.now();
       setBusy(true, "正在识别...");
@@ -1121,14 +1370,11 @@
 
       try {
         const engine = await ensureEngine();
-        const output = await engine.predict(state.imageBlob);
-        const primaryResult = unwrapOcrResult(output);
-        state.rawOutput = output;
-        state.results = normalizeOcrOutput(primaryResult);
-        state.timings.ocrMs = Number(primaryResult?.metrics?.totalMs) || performance.now() - startedAt;
-        state.status = "done";
+        const item = activeImage();
+        const recognized = await recognizeImageItem(item, engine, startedAt);
+        syncActiveImageState(item);
         setStep("done");
-        const recognizedText = collectText();
+        const recognizedText = recognized.text;
         let copyNote = "";
         if (els.autoCopyToggle.checked && recognizedText) {
           try {
@@ -1144,11 +1390,101 @@
       } catch (error) {
         console.error(error);
         state.status = "error";
+        const item = activeImage();
+        if (item) {
+          item.status = "error";
+          item.error = messageOfOcrError(error);
+        }
         setMessage(messageOfOcrError(error), "error");
       } finally {
         setBusy(false);
         render();
       }
+    }
+
+    async function runAllOcr() {
+      if (!state.images.length) {
+        setMessage("请先选择、拖入或粘贴图片。", "warn");
+        return;
+      }
+      if (state.batchRunning || state.status === "recognizing") return;
+
+      state.batchRunning = true;
+      setBusy(true, "正在批量识别...");
+      render();
+
+      let okCount = 0;
+      let failCount = 0;
+      const startedAt = performance.now();
+
+      try {
+        const engine = await ensureEngine();
+        for (let index = 0; index < state.images.length; index += 1) {
+          const item = state.images[index];
+          selectImage(item.id);
+          item.status = "recognizing";
+          syncActiveImageState(item);
+          setStep("ocr");
+          setMessage(`正在识别第 ${index + 1}/${state.images.length} 张：${item.name}`, "warn");
+          setBusy(true, `正在批量识别 ${index + 1}/${state.images.length}...`);
+          render();
+          drawPreview();
+
+          try {
+            await recognizeImageItem(item, engine);
+            okCount += 1;
+          } catch (error) {
+            console.error(error);
+            item.status = "error";
+            item.error = messageOfOcrError(error);
+            failCount += 1;
+          }
+          syncActiveImageState(item);
+          render();
+        }
+
+        setStep("done");
+        const recognizedText = collectBatchText();
+        let copyNote = "";
+        if (els.autoCopyToggle.checked && recognizedText) {
+          try {
+            await writeClipboardText(recognizedText);
+            copyNote = " 已自动复制。";
+          } catch (copyError) {
+            console.warn(copyError);
+            copyNote = " 自动复制失败。";
+          }
+        }
+        const totalMs = performance.now() - startedAt;
+        setMessage(`批量识别完成，成功 ${okCount} 张，失败 ${failCount} 张，总耗时 ${formatMs(totalMs)}。${copyNote}`, failCount ? "warn" : "ok");
+      } catch (error) {
+        console.error(error);
+        state.status = "error";
+        setMessage(messageOfOcrError(error), "error");
+      } finally {
+        state.batchRunning = false;
+        setBusy(false);
+        render();
+        drawPreview();
+      }
+    }
+
+    async function recognizeImageItem(item, engine, startedAt = performance.now()) {
+      if (!item) throw new Error("没有可识别的图片。");
+      const output = await engine.predict(item.blob);
+      const primaryResult = unwrapOcrResult(output);
+      const results = normalizeOcrOutput(primaryResult);
+      const ocrMs = Number(primaryResult?.metrics?.totalMs) || performance.now() - startedAt;
+      item.rawOutput = output;
+      item.results = results;
+      item.ocrMs = ocrMs;
+      item.status = "done";
+      item.error = "";
+      return {
+        results,
+        text: results.map((result) => result.text).filter(Boolean).join("\n"),
+        ocrMs
+      };
     }
 
     async function ensureEngine() {
@@ -1269,7 +1605,16 @@
       state.timings.ocrMs = null;
       state.results = [];
       state.rawOutput = null;
-      state.status = state.imageBlob ? "image-ready" : "idle";
+      state.images.forEach((item) => {
+        item.results = [];
+        item.rawOutput = null;
+        item.ocrMs = null;
+        item.status = "image-ready";
+        item.error = "";
+      });
+      const item = activeImage();
+      if (item) syncActiveImageState(item);
+      else state.status = "idle";
       setStep(state.imageBlob ? "input" : "engine");
       updateRuntimeBadge();
       setMessage("模型设置已改变，下次识别会重新初始化。", "warn");
@@ -1403,7 +1748,7 @@
     }
 
     async function copyText() {
-      const text = collectText();
+      const text = collectBatchText();
       if (!text) {
         setMessage("没有可复制的识别文本。", "warn");
         return;
@@ -1442,6 +1787,19 @@
         app: "PaddleOCR-V6 offline browser",
         runtimeMode: runtimeMode(),
         model: els.modelSelect.value,
+        batch: state.images.map((item) => ({
+          id: item.id,
+          name: item.name,
+          type: item.blob?.type || "",
+          size: item.size,
+          width: item.width,
+          height: item.height,
+          status: item.status,
+          error: item.error || "",
+          ocrMs: item.ocrMs,
+          text: (item.results || []).map((result) => result.text).filter(Boolean).join("\n"),
+          results: (item.results || []).map(({ index, text, score, poly }) => ({ index, text, score, poly }))
+        })),
         image: {
           name: state.imageName,
           type: state.imageBlob?.type || "",
@@ -1465,15 +1823,22 @@
     }
 
     function resetImage() {
-      revokeImageUrl();
+      state.images.forEach((item) => {
+        if (item.url) URL.revokeObjectURL(item.url);
+      });
+      state.images = [];
+      state.activeImageId = "";
       state.imageBlob = null;
       state.imageName = "";
       state.imageBitmap = null;
+      state.imageUrl = "";
       state.imageWidth = 0;
       state.imageHeight = 0;
       state.imageSize = 0;
       state.results = [];
       state.rawOutput = null;
+      state.searchQuery = "";
+      els.resultSearch.value = "";
       state.highlightedIndex = -1;
       state.timings.ocrMs = null;
       state.status = "idle";
@@ -1495,11 +1860,13 @@
     function render() {
       const hasImage = Boolean(state.imageBlob);
       const hasResults = state.results.length > 0;
+      const hasBatchResults = state.images.some((item) => item.results?.length);
       const currentModel = MODEL_CATALOG[els.modelSelect.value] || MODEL_CATALOG.tiny;
       const filteredResults = getFilteredResults();
-      els.runBtn.disabled = !hasImage || state.status === "recognizing";
-      els.copyBtn.disabled = !hasResults;
-      els.exportBtn.disabled = !hasResults;
+      els.runBtn.disabled = !hasImage || state.status === "recognizing" || state.batchRunning;
+      els.runAllBtn.disabled = !state.images.length || state.status === "recognizing" || state.batchRunning;
+      els.copyBtn.disabled = !hasBatchResults;
+      els.exportBtn.disabled = !hasBatchResults;
       els.redrawBtn.disabled = !hasImage;
       els.imageChip.textContent = hasImage ? `${state.imageWidth} x ${state.imageHeight}` : "未选择图片";
       els.imageChip.className = `chip ${hasImage ? "ok" : ""}`;
@@ -1512,8 +1879,30 @@
       els.assetMetric.textContent = runtimeLabel();
       els.footerModel.textContent = currentModel.label;
       els.rawText.textContent = hasResults ? collectText() : "识别完成后，这里会显示可复制的纯文本。";
+      renderQueue();
       renderSteps();
       renderResults();
+    }
+
+    function renderQueue() {
+      els.imageQueue.classList.toggle("hidden", state.images.length <= 1);
+      els.imageQueue.innerHTML = "";
+      state.images.forEach((item, index) => {
+        const node = document.createElement("button");
+        node.type = "button";
+        node.className = `queue-item ${item.id === state.activeImageId ? "active" : ""}`;
+        node.innerHTML = `
+          <img class="queue-thumb" alt="" src="${item.url}">
+          <span class="queue-meta">
+            <span class="queue-name"></span>
+            <span class="queue-status"></span>
+          </span>
+        `;
+        node.querySelector(".queue-name").textContent = `${index + 1}. ${item.name}`;
+        node.querySelector(".queue-status").textContent = queueStatusText(item);
+        node.addEventListener("click", () => selectImage(item.id));
+        els.imageQueue.appendChild(node);
+      });
     }
 
     function renderSteps() {
@@ -1621,7 +2010,10 @@
       els.preloadBtn.disabled = isBusy;
       els.pasteBtn.disabled = isBusy;
       els.fitBtn.disabled = isBusy;
-      if (isBusy) els.runBtn.disabled = true;
+      if (isBusy) {
+        els.runBtn.disabled = true;
+        els.runAllBtn.disabled = true;
+      }
     }
 
     function setStep(step) {
@@ -1636,6 +2028,7 @@
     }
 
     function footerText() {
+      if (state.batchRunning) return "批量识别中";
       if (state.status === "idle") return "等待图片";
       if (state.status === "image-ready") return "图片已准备";
       if (state.status === "recognizing") return "识别中";
@@ -1659,6 +2052,25 @@
 
     function collectText() {
       return state.results.map((item) => item.text).filter(Boolean).join("\n");
+    }
+
+    function collectBatchText() {
+      if (state.images.length <= 1) return collectText();
+      return state.images
+        .filter((item) => item.results?.length)
+        .map((item, index) => {
+          const text = item.results.map((result) => result.text).filter(Boolean).join("\n");
+          return text ? `# ${index + 1} ${item.name}\n${text}` : "";
+        })
+        .filter(Boolean)
+        .join("\n\n");
+    }
+
+    function queueStatusText(item) {
+      if (item.status === "recognizing") return "识别中...";
+      if (item.status === "done") return `${item.results?.length || 0} 行 / ${formatMs(item.ocrMs)}`;
+      if (item.status === "error") return item.error || "识别失败";
+      return `${item.width} x ${item.height} / ${formatBytes(item.size)}`;
     }
 
     function formatScore(score) {
