@@ -1,0 +1,1 @@
+# PaddleOCR-V6-single-html
