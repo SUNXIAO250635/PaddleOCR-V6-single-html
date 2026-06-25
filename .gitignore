@@ -11,3 +11,6 @@ Thumbs.db
 assets/vendor/paddleocr-js.bundle.mjs
 assets/vendor/paddleocr-js.esm.js
 assets/vendor/paddleocr-js.esmsh.bundle.mjs
+
+# Local planning notes
+offline-single-html-plan.md
